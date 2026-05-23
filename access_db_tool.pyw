@@ -163,8 +163,18 @@ class App(tk.Tk):
         self.style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), foreground=c["ink"])
 
     def _build_menu(self):
-        mb = tk.Menu(self)
-        fm = tk.Menu(mb, tearoff=0)
+        menu_bg = "#2B3E50"
+        menu_fg = "#FFFFFF"
+        menu_active_bg = "#4E5D6C"
+        menu_active_fg = "#FFFFFF"
+        menu_disabled_fg = "#8696A7"
+
+        mb = tk.Menu(self, bg=menu_bg, fg=menu_fg, activebackground=menu_active_bg,
+                     activeforeground=menu_active_fg, disabledforeground=menu_disabled_fg,
+                     font=("Segoe UI", 9))
+        fm = tk.Menu(mb, tearoff=0, bg=menu_bg, fg=menu_fg, activebackground=menu_active_bg,
+                     activeforeground=menu_active_fg, disabledforeground=menu_disabled_fg,
+                     font=("Segoe UI", 9))
         fm.add_command(label="Apri Database...", command=self._open_db)
         fm.add_command(label="Chiudi Database", command=self._close_db)
         fm.add_separator()
@@ -172,8 +182,10 @@ class App(tk.Tk):
         fm.add_separator()
         fm.add_command(label="Esci", command=self._quit)
         mb.add_cascade(label="File", menu=fm)
-        
-        cm = tk.Menu(mb, tearoff=0)
+
+        cm = tk.Menu(mb, tearoff=0, bg=menu_bg, fg=menu_fg, activebackground=menu_active_bg,
+                     activeforeground=menu_active_fg, disabledforeground=menu_disabled_fg,
+                     font=("Segoe UI", 9))
         cm.add_command(label="Salva condizione corrente...", command=lambda: self._save_cond(False))
         cm.add_command(label="Salva come nuova...", command=lambda: self._save_cond(True))
         cm.add_command(label="Gestisci libreria...", command=self._open_manager)
@@ -181,14 +193,16 @@ class App(tk.Tk):
         cm.add_command(label="Esporta libreria condizioni...", command=self._export_conditions)
         cm.add_command(label="Importa condizioni da file...", command=self._import_conditions)
         mb.add_cascade(label="Condizioni", menu=cm)
-        
-        mm = tk.Menu(mb, tearoff=0)
+
+        mm = tk.Menu(mb, tearoff=0, bg=menu_bg, fg=menu_fg, activebackground=menu_active_bg,
+                     activeforeground=menu_active_fg, disabledforeground=menu_disabled_fg,
+                     font=("Segoe UI", 9))
         mm.add_command(label="Avvia monitor", command=self._start_monitor)
         mm.add_command(label="Ferma monitor", command=self._stop_monitor)
         mm.add_separator()
         mm.add_command(label="Annulla analisi batch", command=self._cancel_batch)
         mb.add_cascade(label="Monitor/Batch", menu=mm)
-        
+
         self.config(menu=mb)
 
     def _bind_global_shortcuts(self):
