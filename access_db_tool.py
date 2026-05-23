@@ -136,7 +136,7 @@ class App(tk.Tk):
         
         self._build_menu()
         self._bind_global_shortcuts()
-        self._show_home()
+        self._build_layout()
         self._poll_monitor()
         
         self.protocol("WM_DELETE_WINDOW", self._quit)
@@ -190,7 +190,7 @@ class App(tk.Tk):
 
     def _bind_global_shortcuts(self):
         bindings = {
-            "h": self._show_home,
+            "h": lambda: self._go_to_tab("db"),
             "a": self._open_db,
             "c": self._close_db,
             "i": self._run_profiler,
@@ -227,11 +227,16 @@ class App(tk.Tk):
         return "break"
 
     def _go_to_tab(self, tab_name):
-        if not getattr(self, "nb", None):
+        tab_map = {
+            "build": "controls",
+            "dash": "dashboard",
+        }
+        tab_id = tab_map.get(tab_name, tab_name)
+        if hasattr(self, "nav_buttons") and tab_id in self.nav_buttons:
+            self._switch_tab(tab_id)
+        else:
             self._build_layout()
-        target = getattr(self, f"tab_{tab_name}", None)
-        if self.nb and target:
-            self.nb.select(target)
+            self._switch_tab(tab_id)
 
     def _verify_active_formula(self):
         if self._active_ctype == "formula_condition" and self.active_builder and hasattr(self.active_builder, "verify_formula"):
@@ -400,42 +405,81 @@ class App(tk.Tk):
 
     def _build_layout(self):
         for w in self.main_container.winfo_children(): w.destroy()
-        
-        pw = ttk.PanedWindow(self.main_container, orient=tk.HORIZONTAL)
-        pw.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
-        
-        # Left Panel
-        lp = ttk.Frame(pw, width=280, style="V5Panel.TFrame")
-        pw.add(lp, weight=1)
-        self._build_left_panel(lp)
-        
-        # Right Notebook
-        self.nb = ttk.Notebook(pw)
-        pw.add(self.nb, weight=5)
-        
-        self.tab_insights = ttk.Frame(self.nb, style="V5.TFrame"); self.nb.add(self.tab_insights, text=" Insight ")
-        self._build_tab_insights()
-        
-        self.tab_dash = ttk.Frame(self.nb, style="V5.TFrame"); self.nb.add(self.tab_dash, text=" Dashboard V6 ")
-        self._build_tab_dashboard()
-        
-        self.tab_build = ttk.Frame(self.nb, style="V5.TFrame"); self.nb.add(self.tab_build, text=" Costruttore ")
-        self._build_tab_builder()
-        
-        self.tab_res = ttk.Frame(self.nb, style="V5.TFrame"); self.nb.add(self.tab_res, text=" Risultati ")
-        self._build_tab_results()
-        
-        self.tab_monitor = ttk.Frame(self.nb, style="V5.TFrame"); self.nb.add(self.tab_monitor, text=" Monitor ")
-        self._build_tab_monitor()
-        
-        # Status Bar
-        sb = tk.Frame(self.main_container, bg=self.v5_colors["ink"])
+
+        # Main horizontal: sidebar + content
+        main_frame = ttk.Frame(self.main_container)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Sidebar icon-based (~44px)
+        self.sidebar = ttk.Frame(main_frame, width=44, style="dark.TFrame")
+        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        self.sidebar.pack_propagate(False)
+
+        # Content area
+        content_frame = ttk.Frame(main_frame)
+        content_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Barra navigazione tab
+        self.nav_bar = ttk.Frame(content_frame)
+        self.nav_bar.pack(fill=tk.X, padx=8, pady=(8, 0))
+
+        self.nav_buttons = {}
+        for nav_id, label, icon in [
+            ("db", "Database", "🗄"),
+            ("controls", "Controlli", "⚙"),
+            ("dashboard", "Dashboard", "📊"),
+        ]:
+            btn = ttk.Button(
+                self.nav_bar, text=f"{icon} {label}",
+                command=lambda nid=nav_id: self._switch_tab(nid),
+                bootstyle="secondary-outline",
+            )
+            btn.pack(side=tk.LEFT, padx=2)
+            self.nav_buttons[nav_id] = btn
+
+        # Pannello principale
+        self.main_panel = ttk.Frame(content_frame, padding=8)
+        self.main_panel.pack(fill=tk.BOTH, expand=True)
+
+        # Status bar
+        self._build_status_bar(self.main_container)
+
+        # Mostra tab iniziale
+        self._switch_tab("db")
+
+    def _build_status_bar(self, parent):
+        sb = ttk.Frame(parent, bootstyle="dark")
         sb.pack(fill=tk.X, side=tk.BOTTOM)
-        tk.Label(sb, textvariable=self.status, bg=self.v5_colors["ink"], fg="white",
-                 anchor=tk.W, padx=8, pady=4, font=("Segoe UI", 9)).pack(fill=tk.X, side=tk.LEFT, expand=True)
-        ttk.Button(sb, text="🏠 Home", command=self._show_home).pack(side=tk.RIGHT, padx=5)
-        self.mon_indicator = tk.Label(sb, text=" MONITOR OFF ", bg=self.v5_colors["coral"], fg="white", font=("Segoe UI", 8, "bold"), padx=8, pady=2)
+        self.status_label = ttk.Label(
+            sb, textvariable=self.status,
+            bootstyle="inverse-dark", padding=(8, 4)
+        )
+        self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.mon_indicator = ttk.Label(
+            sb, text=" MONITOR OFF ",
+            bootstyle="inverse-danger", padding=(8, 2)
+        )
         self.mon_indicator.pack(side=tk.RIGHT)
+
+    def _switch_tab(self, tab_id):
+        for btn in self.nav_buttons.values():
+            btn.configure(bootstyle="secondary-outline")
+        self.nav_buttons[tab_id].configure(bootstyle="primary")
+
+        for w in self.main_panel.winfo_children():
+            w.destroy()
+
+        if tab_id == "db":
+            from views.database_view import DatabaseView
+            self.current_view = DatabaseView(self.main_panel, self)
+        elif tab_id == "controls":
+            from views.builder_view import BuilderView
+            self.current_view = BuilderView(self.main_panel, self)
+        elif tab_id == "dashboard":
+            from views.dashboard_view import DashboardView
+            self.current_view = DashboardView(self.main_panel, self)
+
+        self.current_view.pack(fill=tk.BOTH, expand=True)
 
     def _build_left_panel(self, parent):
         f = ttk.Frame(parent, padding=5, style="V5Panel.TFrame")
