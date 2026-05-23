@@ -1,7 +1,7 @@
 import os
 import sys
 
-APP_VERSION   = "6.0"
+APP_VERSION   = "7.0"
 APP_BUILD_DATE = "2026-05-12"
 APP_TITLE = f"Access DB Quality Control Tool  v{APP_VERSION}  -  agg. {APP_BUILD_DATE}"
 
