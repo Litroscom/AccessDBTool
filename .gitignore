@@ -1,0 +1,13 @@
+.superpowers/
+app.log
+monitor_log.json
+saved_conditions.json
+condition_groups.json
+database_registry.json
+build/
+dist/
+__pycache__/
+_vendor/
+__pycache__/
+*.pyc
+*.spec

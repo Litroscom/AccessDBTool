@@ -1,0 +1,226 @@
+import os
+import pyodbc
+import threading
+import logging
+
+logger = logging.getLogger("AccessDBTool.DatabaseManager")
+
+class DatabaseManager:
+    def __init__(self):
+        self.conn = None
+        self.db_path = ""
+        self.tables = []
+        self.table_columns = {}
+        self._lock = threading.Lock()
+
+    @property
+    def connected(self):
+        if self.conn is None:
+            return False
+        with self._lock:
+            try:
+                # Verifica che la connessione ODBC sia ancora funzionante
+                self.conn.cursor().execute("SELECT 1")
+                return True
+            except Exception:
+                logger.warning("Connessione al database persa (stale connection). Resetto.")
+                self.conn = None
+                return False
+
+    def connect(self, path):
+        path = os.path.abspath(os.path.normpath(path))
+        if not os.path.exists(path):
+            logger.error(f"File non trovato: {path}")
+            raise FileNotFoundError("File non trovato:\n" + path)
+        
+        available = pyodbc.drivers()
+        drivers_to_try = []
+        for d in available:
+            dl = d.lower()
+            if "access" in dl and "*.mdb" in dl and "text" not in dl and "dbase" not in dl:
+                drivers_to_try.append(d)
+        
+        if not drivers_to_try:
+            logger.error("Nessun driver Access ODBC installato.")
+            raise ConnectionError(
+                "Nessun driver Access ODBC installato!\nDriver disponibili: " + str(available))
+        
+        last_err = None
+        for drv in drivers_to_try:
+            try:
+                cs = "DRIVER={" + drv + "};DBQ=" + path + ";"
+                self.conn = pyodbc.connect(cs)
+                self.db_path = path
+                self._discover()
+                logger.info(f"Connesso con successo a: {path} utilizzando {drv}")
+                return True
+            except Exception as e:
+                last_err = e
+        
+        logger.error(f"Impossibile aprire {path}: {last_err}")
+        raise ConnectionError(
+            "Impossibile aprire: " + path + "\nDriver provati: " + str(drivers_to_try) +
+            "\nErrore: " + str(last_err))
+
+    def disconnect(self):
+        with self._lock:
+            if self.conn:
+                try:
+                    self.conn.close()
+                    logger.info("Database scollegato.")
+                except Exception as e:
+                    logger.warning(f"Errore durante la disconnessione: {e}")
+            self.conn = None
+            self.db_path = ""
+            self.tables = []
+            self.table_columns = {}
+
+    def _discover(self):
+        self.tables = []
+        self.table_columns = {}
+        try:
+            cur = self.conn.cursor()
+            for row in cur.tables(tableType="TABLE"):
+                name = row.table_name
+                if name.startswith("MSys") or name.startswith("~"):
+                    continue
+                self.tables.append(name)
+            self.tables.sort()
+            
+            for table in self.tables:
+                self.table_columns[table] = self._get_columns(table)
+            logger.info(f"Scoperte {len(self.tables)} tabelle.")
+        except Exception as e:
+            logger.error(f"Errore durante il discovery delle tabelle: {e}")
+
+    def _get_columns(self, table):
+        cols = []
+        try:
+            cur_t = self.conn.cursor()
+            cur_t.execute("SELECT TOP 1 * FROM [" + table + "]")
+            if cur_t.description:
+                for d in cur_t.description:
+                    type_str = d[1].__name__ if hasattr(d[1], '__name__') else str(d[1])
+                    cols.append({
+                        "name": d[0],
+                        "type": type_str,
+                        "size": d[3] if len(d) > 3 and d[3] is not None else 0,
+                        "nullable": d[6] if len(d) > 6 else True,
+                    })
+        except Exception as e:
+            logger.warning(f"Impossibile ottenere colonne (metodo SELECT) per [{table}]: {e}")
+
+        if not cols:
+            try:
+                cur = self.conn.cursor()
+                for c in cur.columns(table=table):
+                    cols.append({
+                        "name": c.column_name, "type": c.type_name,
+                        "size": c.column_size, "nullable": c.nullable,
+                    })
+            except Exception as e:
+                logger.warning(f"Impossibile ottenere colonne (metodo .columns()) per [{table}]: {e}")
+        return cols
+
+    def columns(self, table):
+        return [c["name"] for c in self.table_columns.get(table, [])]
+
+    def fetch(self, sql, params=None):
+        with self._lock:
+            if self.conn is None:
+                raise ConnectionError("Nessuna connessione al database attiva. Aprire un database prima di eseguire query.")
+            try:
+                cur = self.conn.cursor()
+                cur.execute(sql, params or [])
+                if cur.description:
+                    cols = [d[0] for d in cur.description]
+                    return cols, [list(r) for r in cur.fetchall()]
+                return [], []
+            except Exception as e:
+                logger.error(f"Errore durante fetch SQL [{sql}]: {e}")
+                raise
+
+    def execute(self, sql, params=None):
+        with self._lock:
+            if self.conn is None:
+                raise ConnectionError("Nessuna connessione al database attiva. Aprire un database prima di eseguire query.")
+            try:
+                cur = self.conn.cursor()
+                cur.execute(sql, params or [])
+                self.conn.commit()
+                return cur.rowcount
+            except Exception as e:
+                logger.error(f"Errore durante esecuzione SQL [{sql}]: {e}")
+                raise
+
+    def row_count(self, table):
+        try:
+            _, rows = self.fetch(f"SELECT COUNT(*) FROM [{table}]")
+            return rows[0][0] if rows else 0
+        except Exception:
+            return -1
+
+    def cast_value(self, table, col_name, value):
+        """Converte un valore stringa (es. da Treeview) al tipo Python corretto
+        basandosi sui metadati della colonna, per evitare errori ODBC di tipo."""
+        if value is None:
+            return None
+        val_s = str(value).strip()
+        if val_s == "":
+            return None
+
+        col_meta = None
+        for c in self.table_columns.get(table, []):
+            if c["name"] == col_name:
+                col_meta = c
+                break
+        if col_meta is None:
+            return value  # Nessun metadato, ritorna così com'è
+
+        type_str = col_meta["type"].lower()
+
+        # Tipi interi
+        int_types = {"int", "long", "short", "byte", "integer", "counter",
+                     "autoincrement", "smallint", "bigint", "tinyint"}
+        # Tipi decimali/float
+        float_types = {"float", "double", "single", "real", "numeric",
+                       "decimal", "currency", "money"}
+        # Tipi booleani
+        bool_types = {"bit", "boolean", "bool", "yesno"}
+
+        if type_str in int_types:
+            try:
+                return int(float(val_s.replace(",", ".")))
+            except (ValueError, TypeError):
+                return value
+        elif type_str in float_types:
+            try:
+                return float(val_s.replace(",", "."))
+            except (ValueError, TypeError):
+                return value
+        elif type_str in bool_types:
+            v_lower = val_s.lower()
+            if v_lower in ("true", "1", "vero", "sì", "si", "yes", "-1"):
+                return True
+            elif v_lower in ("false", "0", "falso", "no"):
+                return False
+            return value
+        else:
+            # Tipi testo/date → ritorna stringa
+            return val_s
+
+    def update_record(self, table, pk_col, pk_val, data_dict):
+        """Aggiorna i campi di un record specifico."""
+        cols = []
+        vals = []
+        for k, v in data_dict.items():
+            if k == pk_col: continue
+            cols.append(f"[{k}] = ?")
+            vals.append(v)
+        
+        if not cols: return 0
+        
+        sql = f"UPDATE [{table}] SET {', '.join(cols)} WHERE [{pk_col}] = ?"
+        vals.append(pk_val)
+        
+        return self.execute(sql, vals)
