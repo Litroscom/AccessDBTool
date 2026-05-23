@@ -83,9 +83,9 @@ class DashboardView(ttk.Frame):
         self.dash_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.dash_tree.tag_configure("error", background="#fff0f0")
-        self.dash_tree.tag_configure("ok", background="#f0fff4")
-        self.dash_tree.tag_configure("running", background="#fffbe6")
+        self.dash_tree.tag_configure("error", background="#5c1a1a", foreground="#ffb3b3")
+        self.dash_tree.tag_configure("ok", background="#1a4c2a", foreground="#b3ffcc")
+        self.dash_tree.tag_configure("running", background="#4a3d0a", foreground="#ffe68a")
         self.dash_tree.bind("<Double-1>", self._on_double_click)
 
         result_frame = ttk.LabelFrame(self, text="Risultati", padding=4)
