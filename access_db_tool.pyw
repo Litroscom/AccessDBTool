@@ -615,11 +615,18 @@ class App(tk.Tk):
 
         self._refresh_dash()
 
+    def _get_dash_tree(self):
+        if hasattr(self, "current_view") and hasattr(self.current_view, "dash_tree"):
+            return self.current_view.dash_tree
+        return getattr(self, "dash_tree", None)
+
     def _on_dash_double_click(self, evt):
-        sel = self.dash_tree.selection()
+        dt = self._get_dash_tree()
+        if dt is None: return
+        sel = dt.selection()
         if not sel: return
         try:
-            item = self.dash_tree.item(sel[0])
+            item = dt.item(sel[0])
             idx = int(item['values'][0]) - 1
             cond = self._dash_items[idx]
             state = self._dashboard_state_for_condition(cond)
@@ -1185,18 +1192,16 @@ class App(tk.Tk):
 
     def _show_results(self, res):
         self.current_result = res
+        if hasattr(self, "current_view") and hasattr(self.current_view, "show_results"):
+            self.current_view.show_results(res)
         self.res_lbl.config(text=f"{res['title']} ({res['count']} record)")
-        
-        # Reset filtro
         self.var_res_filter.set("")
-        
         self.res_tree.delete(*self.res_tree.get_children())
         self.res_tree["columns"] = res["columns"]
         for c in res["columns"]: self.res_tree.heading(c, text=c); self.res_tree.column(c, width=150)
-        
         for i, r in enumerate(res["rows"]):
             self.res_tree.insert("", tk.END, iid=str(i), values=r)
-        self.nb.select(self.tab_res)
+        self._switch_tab("dashboard")
         self.status.set("Risultati caricati.")
 
     def _apply_res_filter(self, _evt=None):
@@ -1225,12 +1230,13 @@ class App(tk.Tk):
         self.res_lbl.config(text=f"{self.current_result['title']} ({count} filtrati su {len(rows)})")
 
     def _selected_dashboard_index(self):
-        if not getattr(self, "dash_tree", None):
+        dt = self._get_dash_tree()
+        if dt is None:
             return None
-        sel = self.dash_tree.selection()
+        sel = dt.selection()
         if not sel:
             return None
-        item = self.dash_tree.item(sel[0])
+        item = dt.item(sel[0])
         values = item.get("values", [])
         if not values:
             return None
@@ -1364,22 +1370,28 @@ class App(tk.Tk):
         self._update_dash_row(idx, count, status, tag)
 
     def _update_dash_row(self, idx, count, status, tag):
-        iid = self.dash_tree.get_children()[idx]
+        dt = self._get_dash_tree()
+        if dt is None:
+            return
+        iid = dt.get_children()[idx]
         cond = self._dash_items[idx]
-        self.dash_tree.item(
+        dt.item(
             iid,
             values=self._dashboard_row_values(idx, cond, count, status),
             tags=(tag,),
         )
 
     def _refresh_dash(self):
-        for i in self.dash_tree.get_children(): self.dash_tree.delete(i)
+        dt = self._get_dash_tree()
+        if dt is None:
+            return
+        for i in dt.get_children(): dt.delete(i)
         selected_tag = self.var_macro_filter.get().strip() if hasattr(self, "var_macro_filter") else "Tutti"
         self._dash_items = self._get_dashboard_items(selected_tag)
         self._refresh_tag_filters()
         for i, c in enumerate(self._dash_items):
             state = self._dashboard_state_for_condition(c)
-            self.dash_tree.insert(
+            dt.insert(
                 "",
                 tk.END,
                 values=self._dashboard_row_values(i, c),
