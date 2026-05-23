@@ -339,6 +339,9 @@ class App(tk.Tk):
         return rows
 
     def _refresh_database_registry_ui(self):
+        if hasattr(self, "current_view") and hasattr(self.current_view, "_refresh_registry"):
+            self.current_view._refresh_registry()
+            return
         if not self.db_registry_tree or not self.db_registry_tree.winfo_exists():
             return
         self.db_registry_tree.delete(*self.db_registry_tree.get_children())
@@ -472,6 +475,7 @@ class App(tk.Tk):
         if tab_id == "db":
             from views.database_view import DatabaseView
             self.current_view = DatabaseView(self.main_panel, self)
+            self.current_view.refresh()
         elif tab_id == "controls":
             from views.builder_view import BuilderView
             self.current_view = BuilderView(self.main_panel, self)
@@ -774,18 +778,21 @@ class App(tk.Tk):
         return normalized_label
 
     def _sync_open_database_ui(self):
-        if hasattr(self, "lbl_db"):
-            if self.db.connected:
-                label = self.current_db_label or self._suggest_database_label(self.db.db_path)
-                self.lbl_db.config(text=f"{label}\n{self.db.db_path}")
-            else:
-                self.lbl_db.config(text="Nessun DB")
-        if hasattr(self, "lst_tables"):
-            self.lst_tables.delete(0, tk.END)
-            if self.db.connected:
-                for table in self.db.tables:
-                    self.lst_tables.insert(tk.END, table)
-        self._refresh_database_registry_ui()
+        if hasattr(self, "current_view") and hasattr(self.current_view, "refresh"):
+            self.current_view.refresh()
+        else:
+            if hasattr(self, "lbl_db"):
+                if self.db.connected:
+                    label = self.current_db_label or self._suggest_database_label(self.db.db_path)
+                    self.lbl_db.config(text=f"{label}\n{self.db.db_path}")
+                else:
+                    self.lbl_db.config(text="Nessun DB")
+            if hasattr(self, "lst_tables"):
+                self.lst_tables.delete(0, tk.END)
+                if self.db.connected:
+                    for table in self.db.tables:
+                        self.lst_tables.insert(tk.END, table)
+            self._refresh_database_registry_ui()
 
     def _connect_active_database(self, path, database_label=""):
         if self.db.connected and self.db.db_path != path:
@@ -1012,8 +1019,16 @@ class App(tk.Tk):
         self._sync_open_database_ui()
         self.status.set("DB chiuso")
 
+    def _get_table_listbox(self):
+        if hasattr(self, "current_view") and hasattr(self.current_view, "lst_tables"):
+            return self.current_view.lst_tables
+        return getattr(self, "lst_tables", None)
+
     def _on_table_sel(self, _evt=None):
-        self.sel_tables = [self.lst_tables.get(i) for i in self.lst_tables.curselection()]
+        lb = self._get_table_listbox()
+        if lb is None:
+            return
+        self.sel_tables = [lb.get(i) for i in lb.curselection()]
         if hasattr(self, "col_selector"):
             all_cols = []
             for t in self.sel_tables:
@@ -1732,13 +1747,14 @@ class App(tk.Tk):
                 main_tables = [t for t in [cond.get("table")] if t]
 
             # 4. Seleziona le tabelle nel listbox (se il DB è aperto)
-            if hasattr(self, "lst_tables") and main_tables:
-                self.lst_tables.selection_clear(0, tk.END)
-                all_items = list(self.lst_tables.get(0, tk.END))
+            lb = self._get_table_listbox()
+            if lb is not None and main_tables:
+                lb.selection_clear(0, tk.END)
+                all_items = list(lb.get(0, tk.END))
                 for t in main_tables:
                     if t in all_items:
-                        self.lst_tables.selection_set(all_items.index(t))
-                self.sel_tables = [self.lst_tables.get(i) for i in self.lst_tables.curselection()]
+                        lb.selection_set(all_items.index(t))
+                self.sel_tables = [lb.get(i) for i in lb.curselection()]
                 if not self.sel_tables:
                     self.sel_tables = main_tables  # fallback se DB non aperto
 
