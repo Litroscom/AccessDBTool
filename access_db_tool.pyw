@@ -1783,7 +1783,8 @@ class App(tk.Tk):
 
 
     def _open_manager(self): 
-        ConditionManager(self, self.store, self._refresh_lib, self._load_cond_into_builder)
+        from views.condition_manager_view import ConditionManagerDialog
+        ConditionManagerDialog(self, self.store, self._refresh_lib, self._load_cond_into_builder)
     def _clear_builder(self):
         self.var_ctype.set("")
         self.var_saved.set("")
