@@ -19,6 +19,7 @@ import tkinter.scrolledtext as st
 # Import Moduli Locali
 import constants
 from logger_config import setup_logging
+import theme_config
 from db_manager import DatabaseManager
 from engines import ConditionExecutor, SimilarityEngine
 from storage import ConditionStore, MonitorLog, GroupStore, DatabaseRegistry
@@ -130,7 +131,7 @@ class App(tk.Tk):
         self.main_container.pack(fill=tk.BOTH, expand=True)
         
         # Stili UI
-        self.style = ttk.Style()
+        self.style = theme_config.setup_theme(self)
         self._configure_v5_theme()
         
         self._build_menu()
