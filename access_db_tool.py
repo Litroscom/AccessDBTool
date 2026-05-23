@@ -109,6 +109,9 @@ class App(tk.Tk):
         self._dash_items = []
         self._dash_state_by_key = {}
         self.current_db_label = ""
+        self.var_ctype = tk.StringVar()
+        self.var_saved = tk.StringVar()
+        self.var_lib_tag = tk.StringVar(value="Tutti")
         
         # Inizializza placeholder UI
         self.btn_mon_start = None
@@ -1029,16 +1032,18 @@ class App(tk.Tk):
         if lb is None:
             return
         self.sel_tables = [lb.get(i) for i in lb.curselection()]
-        if hasattr(self, "col_selector"):
+        cs = self._get_col_selector()
+        if cs:
             all_cols = []
             for t in self.sel_tables:
                 all_cols.extend(self.db.columns(t))
-            self.col_selector.set_columns(list(set(all_cols)))
+            cs.set_columns(list(set(all_cols)))
 
     def _on_builder_table_change(self, table):
         self.sel_tables = [table]
-        if hasattr(self, "col_selector"):
-            self.col_selector.set_columns(self.db.columns(table))
+        cs = self._get_col_selector()
+        if cs:
+            cs.set_columns(self.db.columns(table))
 
     def _on_ctype_change(self, _evt=None):
         ctype_name = self.var_ctype.get()
@@ -1046,72 +1051,91 @@ class App(tk.Tk):
         self._active_ctype = rev.get(ctype_name)
         self._update_builder_fields()
 
+    def _get_builder_parent(self):
+        if hasattr(self, "current_view") and hasattr(self.current_view, "frm_dyn"):
+            return self.current_view.frm_dyn
+        return getattr(self, "frm_dyn", None)
+
+    def _get_col_selector(self):
+        if hasattr(self, "current_view") and hasattr(self.current_view, "col_selector"):
+            return self.current_view.col_selector
+        return getattr(self, "col_selector", None)
+
+    def _get_col_selector_selected(self):
+        cs = self._get_col_selector()
+        if cs:
+            return cs.get_selected()
+        return []
+
     def _update_builder_fields(self):
-        for w in self.frm_dyn.winfo_children(): w.destroy()
+        parent = self._get_builder_parent()
+        if parent is None:
+            return
+        for w in parent.winfo_children(): w.destroy()
         self.active_builder = None
         if not self._active_ctype: return
         
         if self._active_ctype == "value_comparison":
-            self.active_builder = ui_components.ValueComparisonBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+            self.active_builder = ui_components.ValueComparisonBuilder(parent, self.db, self._on_builder_table_change)
         elif self._active_ctype == "duplicate_check":
-            self.active_builder = ui_components.DuplicateBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+            self.active_builder = ui_components.DuplicateBuilder(parent, self.db, self._on_builder_table_change)
         elif self._active_ctype == "similarity_check":
-            self.active_builder = ui_components.SimilarityBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+            self.active_builder = ui_components.SimilarityBuilder(parent, self.db, self._on_builder_table_change)
         elif self._active_ctype == "cross_table_existence":
-            self.active_builder = ui_components.CrossTableBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+            self.active_builder = ui_components.CrossTableBuilder(parent, self.db, self._on_builder_table_change)
         elif self._active_ctype == "formula_condition":
-            self.active_builder = ui_components.FormulaBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+            self.active_builder = ui_components.FormulaBuilder(parent, self.db, self._on_builder_table_change)
         elif self._active_ctype == "concat_similarity":
-            self.active_builder = ui_components.ConcatSimilarityBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+            self.active_builder = ui_components.ConcatSimilarityBuilder(parent, self.db, self._on_builder_table_change)
         elif self._active_ctype == "linked_table_intersection":
-            self.active_builder = ui_components.LinkedTableBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+            self.active_builder = ui_components.LinkedTableBuilder(parent, self.db, self._on_builder_table_change)
             if self.sel_tables: self.active_builder.sec1.set_table(self.sel_tables[0])
             if len(self.sel_tables) > 1: self.active_builder.sec2.set_table(self.sel_tables[1])
         elif self._active_ctype == "format_validation":
             try:
-                self.active_builder = FormatValidationBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+                self.active_builder = FormatValidationBuilder(parent, self.db, self._on_builder_table_change)
             except Exception as _e:
                 import traceback as _tb
                 logger.error(f"FormatValidationBuilder init error: {_tb.format_exc()}")
                 self.status.set(f"Errore builder: {_e}")
         elif self._active_ctype == "daily_coverage_check":
             try:
-                self.active_builder = DailyCoverageBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+                self.active_builder = DailyCoverageBuilder(parent, self.db, self._on_builder_table_change)
             except Exception as _e:
                 import traceback as _tb
                 logger.error(f"DailyCoverageBuilder init error: {_tb.format_exc()}")
                 self.status.set(f"Errore builder: {_e}")
         elif self._active_ctype == "mandatory_record_check":
             try:
-                self.active_builder = MandatoryRecordBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+                self.active_builder = MandatoryRecordBuilder(parent, self.db, self._on_builder_table_change)
             except Exception as _e:
                 import traceback as _tb
                 logger.error(f"MandatoryRecordBuilder init error: {_tb.format_exc()}")
                 self.status.set(f"Errore builder: {_e}")
         elif self._active_ctype == "dependent_condition_check":
             try:
-                self.active_builder = DependentConditionBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+                self.active_builder = DependentConditionBuilder(parent, self.db, self._on_builder_table_change)
             except Exception as _e:
                 import traceback as _tb
                 logger.error(f"DependentConditionBuilder init error: {_tb.format_exc()}")
                 self.status.set(f"Errore builder: {_e}")
         elif self._active_ctype == "row_cross_column_check":
             try:
-                self.active_builder = RowCrossColumnBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+                self.active_builder = RowCrossColumnBuilder(parent, self.db, self._on_builder_table_change)
             except Exception as _e:
                 import traceback as _tb
                 logger.error(f"RowCrossColumnBuilder init error: {_tb.format_exc()}")
                 self.status.set(f"Errore builder: {_e}")
         elif self._active_ctype == "lookup_validation":
             try:
-                self.active_builder = LookupValidationBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+                self.active_builder = LookupValidationBuilder(parent, self.db, self._on_builder_table_change)
             except Exception as _e:
                 import traceback as _tb
                 logger.error(f"LookupValidationBuilder init error: {_tb.format_exc()}")
                 self.status.set(f"Errore builder: {_e}")
         elif self._active_ctype == "aggregate_threshold_check":
             try:
-                self.active_builder = AggregateThresholdBuilder(self.frm_dyn, self.db, self._on_builder_table_change)
+                self.active_builder = AggregateThresholdBuilder(parent, self.db, self._on_builder_table_change)
             except Exception as _e:
                 import traceback as _tb
                 logger.error(f"AggregateThresholdBuilder init error: {_tb.format_exc()}")
@@ -1119,8 +1143,8 @@ class App(tk.Tk):
 
         if self.active_builder:
             self.active_builder.pack(fill=tk.BOTH, expand=True)
-        else:
-            ttk.Label(self.frm_dyn, text=f"Configurazione standard per: {self.var_ctype.get()}").pack()
+        elif parent.winfo_ismapped():
+            ttk.Label(parent, text=f"Configurazione standard per: {self.var_ctype.get()}").pack()
 
     def _validate_active_builder(self):
         if self.active_builder and hasattr(self.active_builder, "validate"):
@@ -1136,7 +1160,8 @@ class App(tk.Tk):
         ctype = self._active_ctype
         if not ctype: return messagebox.showwarning("!", "Seleziona tipo analisi")
         if not self._validate_active_builder(): return
-        selected_cols = self.col_selector.get_selected()
+        cs = self._get_col_selector()
+        selected_cols = cs.get_selected() if cs else []
         
         cond = {
             "type": ctype,
@@ -1587,7 +1612,7 @@ class App(tk.Tk):
             "description": desc,
             "tag": tag,
             "type": ctype,
-            "display_columns": self.col_selector.get_selected(),
+            "display_columns": self._get_col_selector_selected(),
             "saved_at": datetime.now().isoformat(),
             "database_label": self.current_db_label,
             "periodic_review_enabled": dlg.result.get("periodic_review_enabled", False),
@@ -1643,7 +1668,7 @@ class App(tk.Tk):
             "description": desc,
             "tag": tag,
             "type": ctype,
-            "display_columns": self.col_selector.get_selected(),
+            "display_columns": self._get_col_selector_selected(),
             "updated_at": datetime.now().isoformat(),
             "database_label": self.current_db_label,
             "periodic_review_enabled": self.store.items[idx].get("periodic_review_enabled", False),
@@ -1671,15 +1696,25 @@ class App(tk.Tk):
             self.cmb_saved["values"] = names
             if self.var_saved.get() not in names:
                 self.var_saved.set("")
-            self._refresh_dash()
+        if hasattr(self, "current_view") and hasattr(self.current_view, "refresh_lib"):
+            self.current_view.refresh_lib()
+        self._refresh_dash()
 
     def _on_lib_filter_change(self, event=None):
         self.var_saved.set("")
         self._loaded_condition_idx = None
         self._refresh_lib()
 
+    def _get_lib_combo(self):
+        if hasattr(self, "current_view") and hasattr(self.current_view, "cmb_lib"):
+            return self.current_view.cmb_lib
+        return getattr(self, "cmb_saved", None)
+
     def _load_from_lib(self, event=None):
-        idx = self.cmb_saved.current()
+        combo = self._get_lib_combo()
+        if combo is None:
+            return
+        idx = combo.current()
         if idx < 0: return
         cond = self._lib_items[idx]
         self._load_cond_into_builder(cond)
@@ -1760,20 +1795,21 @@ class App(tk.Tk):
 
             # 5. Popola il selettore colonne del report (usa "display_columns")
             display_cols = cond.get("display_columns", [])
-            if hasattr(self, "col_selector") and self.col_selector and self.db.connected:
+            cs = self._get_col_selector()
+            if cs and self.db.connected:
                 all_cols = []
                 for t in self.sel_tables:
                     all_cols.extend(self.db.columns(t))
                 if all_cols:
-                    self.col_selector.set_columns(list(dict.fromkeys(all_cols)))
-                    self.col_selector.set_selected(display_cols)
+                    cs.set_columns(list(dict.fromkeys(all_cols)))
+                    cs.set_selected(display_cols)
 
             # 6. Popola i campi specifici del builder con la condizione completa
             if self.active_builder:
                 self.active_builder.set_config(cond)
 
             # 7. Switch al tab costruttore
-            self.nb.select(self.tab_build)
+            self._switch_tab("controls")
 
             self.status.set(f"Caricata: {cond.get('name', '?')}")
         except Exception as e:

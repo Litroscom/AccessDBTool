@@ -109,6 +109,9 @@ class App(tk.Tk):
         self._dash_items = []
         self._dash_state_by_key = {}
         self.current_db_label = ""
+        self.var_ctype = tk.StringVar()
+        self.var_saved = tk.StringVar()
+        self.var_lib_tag = tk.StringVar(value="Tutti")
         
         # Inizializza placeholder UI
         self.btn_mon_start = None
@@ -1024,21 +1027,39 @@ class App(tk.Tk):
             return self.current_view.lst_tables
         return getattr(self, "lst_tables", None)
 
+    def _get_builder_parent(self):
+        if hasattr(self, "current_view") and hasattr(self.current_view, "frm_dyn"):
+            return self.current_view.frm_dyn
+        return getattr(self, "frm_dyn", None)
+
+    def _get_col_selector(self):
+        if hasattr(self, "current_view") and hasattr(self.current_view, "col_selector"):
+            return self.current_view.col_selector
+        return getattr(self, "col_selector", None)
+
+    def _get_col_selector_selected(self):
+        cs = self._get_col_selector()
+        if cs:
+            return cs.get_selected()
+        return []
+
     def _on_table_sel(self, _evt=None):
         lb = self._get_table_listbox()
         if lb is None:
             return
         self.sel_tables = [lb.get(i) for i in lb.curselection()]
-        if hasattr(self, "col_selector"):
+        cs = self._get_col_selector()
+        if cs:
             all_cols = []
             for t in self.sel_tables:
                 all_cols.extend(self.db.columns(t))
-            self.col_selector.set_columns(list(set(all_cols)))
+            cs.set_columns(list(set(all_cols)))
 
     def _on_builder_table_change(self, table):
         self.sel_tables = [table]
-        if hasattr(self, "col_selector"):
-            self.col_selector.set_columns(self.db.columns(table))
+        cs = self._get_col_selector()
+        if cs:
+            cs.set_columns(self.db.columns(table))
 
     def _on_ctype_change(self, _evt=None):
         ctype_name = self.var_ctype.get()
@@ -1136,7 +1157,8 @@ class App(tk.Tk):
         ctype = self._active_ctype
         if not ctype: return messagebox.showwarning("!", "Seleziona tipo analisi")
         if not self._validate_active_builder(): return
-        selected_cols = self.col_selector.get_selected()
+        cs = self._get_col_selector()
+        selected_cols = cs.get_selected() if cs else []
         
         cond = {
             "type": ctype,
@@ -1587,7 +1609,7 @@ class App(tk.Tk):
             "description": desc,
             "tag": tag,
             "type": ctype,
-            "display_columns": self.col_selector.get_selected(),
+            "display_columns": self._get_col_selector_selected(),
             "saved_at": datetime.now().isoformat(),
             "database_label": self.current_db_label,
             "periodic_review_enabled": dlg.result.get("periodic_review_enabled", False),
@@ -1643,7 +1665,7 @@ class App(tk.Tk):
             "description": desc,
             "tag": tag,
             "type": ctype,
-            "display_columns": self.col_selector.get_selected(),
+            "display_columns": self._get_col_selector_selected(),
             "updated_at": datetime.now().isoformat(),
             "database_label": self.current_db_label,
             "periodic_review_enabled": self.store.items[idx].get("periodic_review_enabled", False),
@@ -1671,15 +1693,25 @@ class App(tk.Tk):
             self.cmb_saved["values"] = names
             if self.var_saved.get() not in names:
                 self.var_saved.set("")
-            self._refresh_dash()
+        if hasattr(self, "current_view") and hasattr(self.current_view, "refresh_lib"):
+            self.current_view.refresh_lib()
+        self._refresh_dash()
 
     def _on_lib_filter_change(self, event=None):
         self.var_saved.set("")
         self._loaded_condition_idx = None
         self._refresh_lib()
 
+    def _get_lib_combo(self):
+        if hasattr(self, "current_view") and hasattr(self.current_view, "cmb_lib"):
+            return self.current_view.cmb_lib
+        return getattr(self, "cmb_saved", None)
+
     def _load_from_lib(self, event=None):
-        idx = self.cmb_saved.current()
+        combo = self._get_lib_combo()
+        if combo is None:
+            return
+        idx = combo.current()
         if idx < 0: return
         cond = self._lib_items[idx]
         self._load_cond_into_builder(cond)
@@ -1760,20 +1792,21 @@ class App(tk.Tk):
 
             # 5. Popola il selettore colonne del report (usa "display_columns")
             display_cols = cond.get("display_columns", [])
-            if hasattr(self, "col_selector") and self.col_selector and self.db.connected:
+            cs = self._get_col_selector()
+            if cs and self.db.connected:
                 all_cols = []
                 for t in self.sel_tables:
                     all_cols.extend(self.db.columns(t))
                 if all_cols:
-                    self.col_selector.set_columns(list(dict.fromkeys(all_cols)))
-                    self.col_selector.set_selected(display_cols)
+                    cs.set_columns(list(dict.fromkeys(all_cols)))
+                    cs.set_selected(display_cols)
 
             # 6. Popola i campi specifici del builder con la condizione completa
             if self.active_builder:
                 self.active_builder.set_config(cond)
 
             # 7. Switch al tab costruttore
-            self.nb.select(self.tab_build)
+            self._switch_tab("controls")
 
             self.status.set(f"Caricata: {cond.get('name', '?')}")
         except Exception as e:
