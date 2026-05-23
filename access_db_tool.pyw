@@ -485,6 +485,7 @@ class App(tk.Tk):
         elif tab_id == "dashboard":
             from views.dashboard_view import DashboardView
             self.current_view = DashboardView(self.main_panel, self)
+            self.current_view._refresh()
 
         self.current_view.pack(fill=tk.BOTH, expand=True)
 
@@ -1462,7 +1463,7 @@ class App(tk.Tk):
         self.mon_log.flush()
         if self.btn_mon_start: self.btn_mon_start.config(state=tk.NORMAL)
         if self.btn_mon_stop: self.btn_mon_stop.config(state=tk.DISABLED)
-        if self.mon_indicator: self.mon_indicator.config(text=" MONITOR OFF ", bg=self.v5_colors["coral"])
+        if self.mon_indicator: self.mon_indicator.config(text=" MONITOR OFF ", bootstyle="danger")
 
     def _run_profiler(self):
         if not self.db.connected: return messagebox.showwarning("!", "Apri un Database prima di generare Insight.")
