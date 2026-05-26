@@ -1425,15 +1425,13 @@ class App(tk.Tk):
             if cond_db_label and cond_db_label != self.current_db_label:
                 self._ensure_active_database_for_label(cond_db_label, interactive=False)
 
-            # 1. Identifica il tipo
-            ctype_key = cond.get("type", "")
+            self._switch_tab("controls")
 
-            # 2. Imposta tipo analisi e builder
+            ctype_key = cond.get("type", "")
             ctype_label = constants.CONDITION_TYPES.get(ctype_key, "")
             if ctype_label:
                 self.var_ctype.set(ctype_label)
             
-            # Sincronizza nome per eventuale aggiornamento
             self.var_saved.set(cond.get("name", ""))
             self._loaded_condition_idx = self._find_store_index(cond)
             tag = cond.get("tag", "").strip()
@@ -1443,31 +1441,19 @@ class App(tk.Tk):
                 self.var_saved.set(cond.get("name", ""))
             
             self._active_ctype = ctype_key
-            self._update_builder_fields()   # crea il builder in modo sincrono
+            self._update_builder_fields()
 
-            # 3. Ricava la/le tabelle in base al tipo
-            # Il formato JSON usa "source_table" o "table", non "tables"
             if ctype_key in ("cross_table_existence",):
                 main_tables = [t for t in [cond.get("source_table")] if t]
             else:
                 main_tables = [t for t in [cond.get("table")] if t]
 
-            # 4. Seleziona le tabelle nel listbox (se il DB è aperto)
-            lb = self._get_table_listbox()
-            if lb is not None and main_tables:
-                lb.selection_clear(0, tk.END)
-                all_items = list(lb.get(0, tk.END))
-                for t in main_tables:
-                    if t in all_items:
-                        lb.selection_set(all_items.index(t))
-                self.sel_tables = [lb.get(i) for i in lb.curselection()]
-                if not self.sel_tables:
-                    self.sel_tables = main_tables  # fallback se DB non aperto
+            if main_tables:
+                self.sel_tables = main_tables
 
-            # 5. Popola il selettore colonne del report (usa "display_columns")
-            display_cols = cond.get("display_columns", [])
             cs = self._get_col_selector()
             if cs and self.db.connected:
+                display_cols = cond.get("display_columns", [])
                 all_cols = []
                 for t in self.sel_tables:
                     all_cols.extend(self.db.columns(t))
@@ -1475,13 +1461,10 @@ class App(tk.Tk):
                     cs.set_columns(list(dict.fromkeys(all_cols)))
                     cs.set_selected(display_cols)
 
-            # 6. Popola i campi specifici del builder con la condizione completa
             if self.active_builder:
                 self.active_builder.set_config(cond)
 
-            # 7. Switch al tab costruttore
-            self._switch_tab("controls")
-
+            self.current_view.sync_ctype()
             self.status.set(f"Caricata: {cond.get('name', '?')}")
         except Exception as e:
             import traceback
