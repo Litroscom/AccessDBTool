@@ -83,7 +83,7 @@ class DashboardView(ttk.Frame):
         self.dash_tree.tag_configure("running", background="#4a3d0a", foreground="#ffe68a")
         self.dash_tree.tag_configure("idle", foreground="gray")
 
-        self.dash_tree.bind("<Button-1>", self._on_single_click)
+        self.dash_tree.bind("<<TreeviewSelect>>", self._on_select)
         self.dash_tree.bind("<Double-1>", self._on_double_click)
 
         from views.results_view import ResultsView
@@ -135,7 +135,7 @@ class DashboardView(ttk.Frame):
         ))
         self.cmb_db["values"] = ["Tutti"] + db_labels
 
-    def _on_single_click(self, evt):
+    def _on_select(self, evt):
         sel = self.dash_tree.selection()
         if not sel:
             return
