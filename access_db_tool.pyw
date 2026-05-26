@@ -868,9 +868,9 @@ class App(tk.Tk):
 
     def _show_results(self, res):
         self.current_result = res
+        self._switch_tab("dashboard")
         if hasattr(self, "current_view") and hasattr(self.current_view, "show_results"):
             self.current_view.show_results(res)
-        self._switch_tab("dashboard")
         self.status.set("Risultati caricati.")
 
     def _apply_res_filter(self, _evt=None):
@@ -917,7 +917,6 @@ class App(tk.Tk):
             return
         self._set_dashboard_state(cond, "-", "In corso...", "running")
         self._update_dash_row(idx, "-", "In corso...", "running")
-        self._switch_tab("dashboard")
         threading.Thread(target=self._execute_dashboard_task, args=(idx, dict(cond)), daemon=True).start()
 
     def _execute_dashboard_task(self, idx, cond):
@@ -1563,6 +1562,25 @@ class App(tk.Tk):
                 seen["right_records"].add(right_key.upper())
         return payload
 
+    def _ensure_active_builder_from_result(self):
+        if self.active_builder and hasattr(self.active_builder, "add_exceptions"):
+            return
+        if not self.current_result:
+            return
+        cond = self.current_result.get("_condition")
+        if not cond:
+            return
+        ctype = cond.get("type") or self._current_result_condition_type()
+        if not ctype:
+            return
+        self._active_ctype = ctype
+        self._update_builder_fields()
+        if self.active_builder:
+            try:
+                self.active_builder.set_config(cond)
+            except Exception:
+                pass
+
     def _show_res_menu(self, event):
         iid = self._get_res_tree().identify_row(event.y)
         if not iid: return
@@ -1570,14 +1588,15 @@ class App(tk.Tk):
         if iid not in current_sel:
             self._get_res_tree().selection_add(iid)
         self._get_res_tree().focus(iid)
-        
+
         m = tk.Menu(self, tearoff=0)
         edit_state = tk.NORMAL if self._result_supports_direct_update() else tk.DISABLED
         m.add_command(label="Modifica record...", command=self._edit_res_record, state=edit_state)
         m.add_separator()
         m.add_command(label="Sostituzione Massiva...", command=self._bulk_replace_results, state=edit_state)
-        
-        # Seleziona eccezioni solo se il builder corrente le accetta
+
+        self._ensure_active_builder_from_result()
+
         if self.active_builder and hasattr(self.active_builder, "add_exceptions"):
             ctype = self._current_result_condition_type()
             if ctype != "concat_similarity":
