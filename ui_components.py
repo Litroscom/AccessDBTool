@@ -1489,7 +1489,7 @@ class CrossTableBuilder(ttk.Frame):
         ttk.Combobox(frame, textvariable=op_var, values=list(constants.OPERATORS.keys()), width=10).pack(side=tk.LEFT, padx=2)
         val_var = tk.StringVar(value=value)
         ttk.Entry(frame, textvariable=val_var, width=15).pack(side=tk.LEFT, padx=2)
-        ttk.Button(frame, text="x", width=2, command=lambda f=frame: self._remove_filter(f, self.exclude_rows)).pack(side=tk.LEFT)
+        ttk.Button(frame, text="✕", width=2, command=lambda f=frame: self._remove_filter(f, self.exclude_rows)).pack(side=tk.LEFT)
         row_data = {"frame": frame, "column": col_var, "operator": op_var, "value": val_var, "col_combo": col_combo}
         self.exclude_rows.append(row_data)
 
@@ -2199,13 +2199,14 @@ class FormatValidationBuilder(ttk.Frame):
         return result
 
     def set_exclude_conditions(self, conditions):
-        for row in list(self._excl_rows):
-            self._remove_excl_row(row)
+        for row in list(self._exclude_cond_rows):
+            self._remove_exclude_cond_row(row)
         for cond in conditions:
-            self._add_excl_row(
+            self._add_exclude_cond_row(
                 col=cond.get("column", ""),
                 op=cond.get("operator", "="),
                 val=str(cond.get("value", "")),
+                logic=cond.get("logic", "AND"),
             )
 
     def _exception_column_score(self, column):
@@ -2459,11 +2460,11 @@ class DailyCoverageBuilder(ttk.Frame):
         ttk.Button(frm, text="✕", width=2, command=lambda: self._remove_row(d, self._filter_rows)).pack(side=tk.LEFT)
         self._filter_rows.append(d)
 
-    def _add_exclude_cond_row(self, col="", op="=", val=""):
-        frm = ttk.Frame(self._frm_filters)
+    def _add_exclude_cond_row(self, col="", op="=", val="", logic="AND"):
+        frm = ttk.Frame(self._frm_exclude_conds)
         frm.pack(fill=tk.X, pady=1)
         cols_list = self.db.columns(self.var_table.get()) if (self.db and self.var_table.get()) else []
-        logic_var = tk.StringVar(value="AND")
+        logic_var = tk.StringVar(value=logic)
         if self._exclude_cond_rows:
             ttk.Combobox(frm, textvariable=logic_var, values=constants.LOGIC_OPS, state="readonly", width=5).pack(side=tk.LEFT, padx=2)
         else:
@@ -2536,7 +2537,7 @@ class DailyCoverageBuilder(ttk.Frame):
         for r in list(self._exclude_cond_rows): self._remove_row(r, self._exclude_cond_rows)
         
         for cond in c.get("conditions", []):
-            if (m_col and cond["column"] == m_col) or (w_col and cond["column"] == w_col):
+            if (m_col and cond.get("column") == m_col) or (w_col and cond.get("column") == w_col):
                 continue
             self._add_filter_row(col=cond["column"], op=cond["operator"], val=cond.get("value", ""))
         for cond in c.get("exclude_conditions", []):
@@ -2780,9 +2781,8 @@ class BulkFilterReplaceDialog(tk.Toplevel):
                         changed = True
                         total_replacements += 1
             
-            if True: # Always save if changed? we are editing objects in self.store.items directly.
-                if changed:
-                    modified_conditions_count += 1
+            if changed:
+                modified_conditions_count += 1
                     
         if total_replacements == 0:
             messagebox.showinfo("Nessuna Modifica", f"Non è stato trovato nessun filtro per la colonna '{col}' con il valore '{old_val}'.")
