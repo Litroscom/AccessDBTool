@@ -412,11 +412,15 @@ class App(tk.Tk):
     def _get_res_tree(self):
         if hasattr(self, "current_view") and hasattr(self.current_view, "res_tree"):
             return self.current_view.res_tree
+        if hasattr(self, "current_view") and hasattr(self.current_view, "results_view"):
+            return getattr(self.current_view.results_view, "res_tree", None)
         return getattr(self, "res_tree", None)
 
     def _get_res_lbl(self):
         if hasattr(self, "current_view") and hasattr(self.current_view, "res_lbl"):
             return self.current_view.res_lbl
+        if hasattr(self, "current_view") and hasattr(self.current_view, "results_view"):
+            return getattr(self.current_view.results_view, "res_lbl", None)
         return getattr(self, "res_lbl", None)
 
     def _on_dash_double_click(self, evt):
