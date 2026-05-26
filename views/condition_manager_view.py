@@ -65,7 +65,7 @@ class ConditionManagerDialog(tk.Toplevel):
 
         self.list_tree = ttk.Treeview(
             list_frame, columns=("name", "tag", "db"),
-            show="headings", selectmode="browse"
+            show="headings", selectmode="extended"
         )
         self.list_tree.heading("name", text="Nome")
         self.list_tree.heading("tag", text="Tag")
@@ -113,11 +113,15 @@ class ConditionManagerDialog(tk.Toplevel):
                    bootstyle="secondary").pack(side=tk.LEFT, padx=2)
         ttk.Button(action_frame, text="🗑 Elimina", command=self._delete,
                    bootstyle="danger").pack(side=tk.LEFT, padx=2)
+        ttk.Button(action_frame, text="🏷 Assegna tag...", command=self._assign_tag,
+                   bootstyle="secondary").pack(side=tk.LEFT, padx=2)
 
         footer = ttk.Frame(self, padding=6)
         footer.pack(fill=tk.X)
         self.lbl_count = ttk.Label(footer, text="", bootstyle="info")
         self.lbl_count.pack(side=tk.LEFT)
+        self.lbl_tags = ttk.Label(footer, text="", font=("", 8, "italic"))
+        self.lbl_tags.pack(side=tk.LEFT, padx=8)
 
     def _populate(self):
         self.list_tree.delete(*self.list_tree.get_children())
@@ -156,18 +160,23 @@ class ConditionManagerDialog(tk.Toplevel):
 
         all_tags = self.store.tags()
         self.cmb_filter["values"] = ["Tutti"] + all_tags
-        self.lbl_count.config(text=f"{len(items)} condizioni su {len(self.store.items)}")
+        self.lbl_count.config(text=f"{len(self.store.items)} condizioni totali")
+        tag_counts = {}
+        for c in self.store.items:
+            tag = c.get("tag", "") or "Nessuno"
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        breakdown = " | ".join(f"{t}: {n}" for t, n in sorted(tag_counts.items()))
+        self.lbl_tags.config(text=breakdown)
 
     def _on_select(self, _evt=None):
         sel = self.list_tree.selection()
         if not sel:
             return
         idx = int(sel[0])
-        cond = self._current_items()[idx]
-        self._show_detail(cond)
-
-    def _current_items(self):
-        return self.store.items
+        items = self._current_filtered_items()
+        if idx < len(items):
+            cond = items[idx]
+            self._show_detail(cond)
 
     def _show_detail(self, cond):
         self.detail_name.config(text=cond.get("name", ""))
@@ -195,14 +204,10 @@ class ConditionManagerDialog(tk.Toplevel):
         return items
 
     def _edit(self):
-        sel = self.list_tree.selection()
-        if not sel:
+        indices = self._selected_store_indices()
+        if not indices:
             return
-        idx = int(sel[0])
-        items = self._current_filtered_items()
-        if idx >= len(items):
-            return
-        self.on_load(items[idx])
+        self.on_load(self.store.items[indices[0]])
         self.destroy()
 
     def _duplicate(self):
@@ -220,17 +225,44 @@ class ConditionManagerDialog(tk.Toplevel):
         self.on_refresh()
 
     def _delete(self):
-        sel = self.list_tree.selection()
-        if not sel:
+        indices = self._selected_store_indices()
+        if not indices:
             return
-        if not messagebox.askyesno("Conferma", "Eliminare la condizione selezionata?"):
+        if not messagebox.askyesno("Conferma", f"Eliminare {len(indices)} condizioni?"):
             return
-        idx = int(sel[0])
-        items = self._current_filtered_items()
-        global_idx = self.store.items.index(items[idx])
-        self.store.delete(global_idx)
+        for i in sorted(indices, reverse=True):
+            del self.store.items[i]
+        self.store._save()
         self._populate()
         self.on_refresh()
+
+    def _assign_tag(self):
+        indices = self._selected_store_indices()
+        if not indices:
+            messagebox.showwarning("Attenzione", "Seleziona almeno una condizione.")
+            return
+        from tkinter import simpledialog
+        new_tag = simpledialog.askstring("Assegna tag", "Nuovo tag per le condizioni selezionate:")
+        if not new_tag:
+            return
+        new_tag = new_tag.strip()
+        for i in indices:
+            self.store.items[i]["tag"] = new_tag
+        self.store._save()
+        self._populate()
+        self.on_refresh()
+
+    def _selected_store_indices(self):
+        selected = []
+        for iid in self.list_tree.selection():
+            items = self._current_filtered_items()
+            try:
+                idx = items[int(iid)]
+                global_idx = self.store.items.index(idx)
+                selected.append(global_idx)
+            except Exception:
+                continue
+        return selected
 
     def _export_selected(self):
         if not self.store.items:
