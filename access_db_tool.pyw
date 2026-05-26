@@ -1573,10 +1573,30 @@ class App(tk.Tk):
         ctype = cond.get("type") or self._current_result_condition_type()
         if not ctype:
             return
+        if not hasattr(self, "_hidden_builder_frame"):
+            self._hidden_builder_frame = ttk.Frame(self)
         self._active_ctype = ctype
-        self._update_builder_fields()
-        if self.active_builder:
+        parent = self._get_builder_parent() or self._hidden_builder_frame
+        for w in parent.winfo_children():
+            w.destroy()
+        self.active_builder = None
+
+        import ui_components
+        db = self.db
+        on_tc = self._on_builder_table_change
+        builders = {
+            "value_comparison": ui_components.ValueComparisonBuilder,
+            "duplicate_check": ui_components.DuplicateBuilder,
+            "similarity_check": ui_components.SimilarityBuilder,
+            "cross_table_existence": ui_components.CrossTableBuilder,
+            "formula_condition": ui_components.FormulaBuilder,
+            "concat_similarity": ui_components.ConcatSimilarityBuilder,
+            "linked_table_intersection": ui_components.LinkedTableBuilder,
+        }
+        builder_cls = builders.get(ctype)
+        if builder_cls:
             try:
+                self.active_builder = builder_cls(parent, db, on_tc)
                 self.active_builder.set_config(cond)
             except Exception:
                 pass
