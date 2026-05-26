@@ -1683,8 +1683,7 @@ class App(tk.Tk):
                 else:
                     target = target_column or (self.active_builder.get_exception_column() if hasattr(self.active_builder, "get_exception_column") else None)
                     cnt = self.active_builder.add_exceptions(vals_to_add, column=target)
-            self._switch_tab("controls")
-            self._show_builder_on_controls_tab()
+            self._load_builder_with_exclusions()
             if vals_to_add:
                 if cnt > 0:
                     messagebox.showinfo("OK", f"Aggiunte {cnt} esclusioni al costruttore.")
@@ -1713,29 +1712,22 @@ class App(tk.Tk):
                 
         if vals_to_add:
             cnt = self.active_builder.add_exceptions(vals_to_add, column=target_column or None)
-            self._switch_tab("controls")
-            self._show_builder_on_controls_tab()
+            self._load_builder_with_exclusions()
             if cnt > 0:
                 messagebox.showinfo("OK", f"Aggiunte {cnt} esclusioni al costruttore.")
             else:
                 messagebox.showinfo("Info", "Tutti i valori erano gia presenti nelle esclusioni.")
 
-    def _show_builder_on_controls_tab(self):
+    def _load_builder_with_exclusions(self):
         if not self.active_builder:
             return
-        if not hasattr(self, "current_view") or not hasattr(self.current_view, "_sections"):
-            return
-        base = self.current_view._sections.get("base")
-        if not base:
-            return
-        if not base["built"]:
-            self.current_view._build_section_base(base["body"])
-            base["built"] = True
-        if not base["expanded"]:
-            base["body"].pack(fill=tk.BOTH, expand=True)
-            base["expanded"] = True
-            base["header"].configure(bootstyle="primary")
-        self.current_view.sync_ctype()
+        try:
+            config = self.active_builder.get_config()
+            cond = dict(self.current_result.get("_condition", {}))
+            cond.update(config)
+            self._load_cond_into_builder(cond)
+        except Exception:
+            self._switch_tab("controls")
 
     def _bulk_replace_results(self):
         if not self._result_supports_direct_update():
