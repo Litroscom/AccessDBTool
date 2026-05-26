@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox, filedialog
 import logging
 
 logger = logging.getLogger("AccessDBTool.ResultsView")
@@ -9,23 +9,26 @@ class ResultsView(ttk.Frame):
     def __init__(self, parent, app):
         super().__init__(parent)
         self.app = app
+        self._current_title = ""
         self._build_ui()
 
     def _build_ui(self):
-        filter_frame = ttk.Frame(self, padding=6)
-        filter_frame.pack(fill=tk.X)
+        self._build_action_bar()
 
-        self.res_lbl = ttk.Label(filter_frame, text="Nessun risultato", font=("", 12, "bold"))
+        filter_frame = ttk.Frame(self, padding=6)
+        filter_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        self.res_lbl = ttk.Label(filter_frame, text="Nessun risultato", font=("", 10, "bold"))
         self.res_lbl.pack(side=tk.LEFT)
 
         ttk.Label(filter_frame, text="Filtra:").pack(side=tk.RIGHT, padx=(0, 4))
         self.var_filter = tk.StringVar()
-        self.entry_filter = ttk.Entry(filter_frame, textvariable=self.var_filter, width=30)
+        self.entry_filter = ttk.Entry(filter_frame, textvariable=self.var_filter, width=25)
         self.entry_filter.pack(side=tk.RIGHT, padx=4)
         self.entry_filter.bind("<KeyRelease>", self._apply_filter)
 
         tree_frame = ttk.Frame(self, padding=4)
-        tree_frame.pack(fill=tk.BOTH, expand=True)
+        tree_frame.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
 
         self.res_tree = ttk.Treeview(tree_frame, show="headings", selectmode="extended")
         vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.res_tree.yview)
@@ -43,7 +46,29 @@ class ResultsView(ttk.Frame):
 
         self.res_tree.bind("<Button-3>", self._on_context_menu)
 
-        self._build_action_bar()
+    def _build_action_bar(self):
+        action_frame = ttk.Frame(self, padding=4)
+        action_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        ttk.Button(action_frame, text="Esporta CSV",
+                   command=self._export_csv,
+                   bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(action_frame, text="Modifica record",
+                   command=self._edit_record,
+                   bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(action_frame, text="Sost. massiva",
+                   command=self._bulk_replace,
+                   bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(action_frame, text="Aggiungi a esclusioni",
+                   command=self._add_to_exclusions,
+                   bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(action_frame, text="Apri nel builder",
+                   command=self._open_in_builder,
+                   bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
 
     def _on_context_menu(self, event):
         self.app._show_res_menu(event)
@@ -86,48 +111,19 @@ class ResultsView(ttk.Frame):
             self.res_tree.insert("", tk.END, iid=str(i), values=r, tags=(row_tag,))
 
         self._current_title = res.get("title", "")
-        self._update_action_bar_state()
-
-    def _build_action_bar(self):
-        action_frame = ttk.Frame(self, padding=4)
-        action_frame.pack(fill=tk.X, side=tk.BOTTOM)
-
-        self._btn_export = ttk.Button(action_frame, text="Esporta CSV",
-                                       command=self._export_csv,
-                                       bootstyle="secondary-outline")
-        self._btn_export.pack(side=tk.LEFT, padx=2)
-
-        self._btn_edit = ttk.Button(action_frame, text="Modifica record",
-                                     command=self._edit_record,
-                                     bootstyle="secondary-outline")
-        self._btn_edit.pack(side=tk.LEFT, padx=2)
-
-        self._btn_bulk = ttk.Button(action_frame, text="Sost. massiva",
-                                     command=self._bulk_replace,
-                                     bootstyle="secondary-outline")
-        self._btn_bulk.pack(side=tk.LEFT, padx=2)
-
-        self._btn_exclude = ttk.Button(action_frame, text="Aggiungi a esclusioni",
-                                        command=self._add_to_exclusions,
-                                        bootstyle="secondary-outline")
-        self._btn_exclude.pack(side=tk.LEFT, padx=2)
-
-        self._btn_open_builder = ttk.Button(action_frame, text="Apri nel builder",
-                                             command=self._open_in_builder,
-                                             bootstyle="secondary-outline")
-        self._btn_open_builder.pack(side=tk.LEFT, padx=2)
-
-    def _update_action_bar_state(self):
-        has_data = self.app.current_result and self.app.current_result.get("rows")
-        state = tk.NORMAL if has_data else tk.DISABLED
-        for btn in [self._btn_export, self._btn_edit, self._btn_bulk, self._btn_exclude, self._btn_open_builder]:
-            try:
-                btn.configure(state=state)
-            except Exception:
-                pass
 
     def _export_csv(self):
-        self.app._export_csv()
+        if not self.app.current_result:
+            return
+        p = filedialog.asksaveasfilename(defaultextension=".csv")
+        if not p:
+            return
+        import csv
+        with open(p, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f, delimiter=";")
+            w.writerow(self.app.current_result["columns"])
+            w.writerows(self.app.current_result["rows"])
+        messagebox.showinfo("OK", "Esportato")
 
     def _edit_record(self):
         self.app._edit_res_record()
@@ -136,7 +132,8 @@ class ResultsView(ttk.Frame):
         self.app._bulk_replace_results()
 
     def _add_to_exclusions(self):
-        self._on_context_menu(None)
+        self.app._ensure_active_builder_from_result()
+        self.app._add_selected_to_exceptions(target_column="")
 
     def _open_in_builder(self):
         if self.app.current_result:
