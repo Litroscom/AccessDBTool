@@ -146,6 +146,7 @@ class DashboardView(ttk.Frame):
                 state_data = self.app._dashboard_state_for_condition(cond)
                 result = state_data.get("result")
                 if result:
+                    self.app.current_result = result
                     self.results_view.show_results(result)
         except Exception:
             pass
