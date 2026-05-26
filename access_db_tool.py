@@ -20,6 +20,7 @@ import tkinter.scrolledtext as st
 import constants
 from logger_config import setup_logging
 import theme_config
+import ui_helpers
 from db_manager import DatabaseManager
 from engines import ConditionExecutor, SimilarityEngine
 from storage import ConditionStore, MonitorLog, GroupStore, DatabaseRegistry
@@ -27,7 +28,7 @@ from monitor_engine import MonitorEngine
 import ui_components
 from ui_components import (
     NotificationPopup, ColumnSelector, MultiConditionBuilder,
-    ConditionSaveDialog, ConditionManager, RecordEditorDialog, GroupSelector,
+    ConditionSaveDialog, RecordEditorDialog, GroupSelector,
     DependentConditionBuilder, RowCrossColumnBuilder,
     LookupValidationBuilder, AggregateThresholdBuilder,
     FormatValidationBuilder, DailyCoverageBuilder, MandatoryRecordBuilder,
@@ -83,20 +84,6 @@ class App(tk.Tk):
         self.monitor_queue = queue.Queue()
         self.monitor = MonitorEngine(self.db, self.executor, self.monitor_queue)
         self.status = tk.StringVar(value="Pronto")
-        self.v5_colors = {
-            "ink": "#16213E",
-            "accent": "#0F8B8D",
-            "accent_dark": "#145374",
-            "coral": "#E85D75",
-            "mint": "#E6FFF4",
-            "sky": "#EDF6FF",
-            "cream": "#FFF3D6",
-            "paper": "#FBFCFF",
-            "line": "#BCD2E8",
-            "gold": "#F4B942",
-            "lavender": "#EEF0FF",
-        }
-        
         # Stato dell'applicazione
         self.current_result = None
         self._all_rows = []
@@ -135,7 +122,6 @@ class App(tk.Tk):
         
         # Stili UI
         self.style = theme_config.setup_theme(self)
-        self._configure_v5_theme()
         
         self._build_menu()
         self._bind_global_shortcuts()
@@ -144,23 +130,6 @@ class App(tk.Tk):
         
         self.protocol("WM_DELETE_WINDOW", self._quit)
         logger.info("Interfaccia caricata.")
-
-    def _configure_v5_theme(self):
-        c = self.v5_colors
-        self.configure(bg=c["paper"])
-        self.style.configure("V5.TFrame", background=c["paper"])
-        self.style.configure("V5Panel.TFrame", background=c["sky"])
-        self.style.configure("V5.TLabel", background=c["paper"], foreground=c["ink"])
-        self.style.configure("V5Title.TLabel", background=c["paper"], foreground=c["ink"], font=("Segoe UI", 14, "bold"))
-        self.style.configure("V5Hint.TLabel", background=c["paper"], foreground=c["accent_dark"], font=("Segoe UI", 9, "italic"))
-        self.style.configure("V5Status.TLabel", background=c["ink"], foreground="white", padding=5)
-        self.style.configure("V5.TLabelframe", background=c["paper"], bordercolor=c["line"])
-        self.style.configure("V5.TLabelframe.Label", foreground=c["accent_dark"], font=("Segoe UI", 9, "bold"))
-        self.style.configure("V6Tree.Treeview", rowheight=24)
-        self.style.configure("Action.TButton", font=("Segoe UI", 9, "bold"), foreground=c["accent_dark"])
-        self.style.configure("Accent.TButton", font=("Segoe UI", 9, "bold"), foreground=c["coral"])
-        self.style.configure("TNotebook.Tab", padding=(16, 6), font=("Segoe UI", 9, "bold"))
-        self.style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), foreground=c["ink"])
 
     def _build_menu(self):
         menu_bg = "#2B3E50"
@@ -259,38 +228,6 @@ class App(tk.Tk):
         if self._active_ctype == "formula_condition" and self.active_builder and hasattr(self.active_builder, "verify_formula"):
             self.active_builder.verify_formula()
 
-    def _shortcut_legend_text(self):
-        return (
-            "Alt+A Apri DB, Alt+C Chiudi, Alt+H Home, Alt+T Costruttore, Alt+D Dashboard, "
-            "Alt+I Insight, Alt+E Batch, Alt+G Gestisci libreria, Alt+R Esegui controllo, "
-            "Alt+S Salva, Alt+U Aggiorna, Alt+L Pulisci form, Alt+V Avvia monitor, "
-            "Alt+F Ferma monitor, Alt+P Pulisci log, Alt+Q Verifica formula SQL."
-        )
-
-    def _build_shortcut_legend(self, parent, wraplength):
-        frame = ttk.LabelFrame(parent, text="Legenda Shortcut", padding=6, style="V5.TLabelframe")
-        frame.pack(fill=tk.X, pady=(12, 0))
-        ttk.Label(
-            frame,
-            text=self._shortcut_legend_text(),
-            style="V5Hint.TLabel",
-            justify=tk.LEFT,
-            wraplength=wraplength
-        ).pack(anchor=tk.W)
-        return frame
-
-    def _mark_shortcut(self, widget, letter):
-        try:
-            text = str(widget.cget("text"))
-        except Exception:
-            return
-        idx = text.lower().find(str(letter).lower())
-        if idx >= 0:
-            try:
-                widget.configure(underline=idx)
-            except Exception:
-                pass
-
     def _condition_cache_key(self, cond):
         payload = {}
         for key, value in dict(cond or {}).items():
@@ -387,42 +324,6 @@ class App(tk.Tk):
         if self.lbl_db_registry_path and self.lbl_db_registry_path.winfo_exists():
             self.lbl_db_registry_path.config(text=text)
 
-    def _show_home(self):
-        for w in self.main_container.winfo_children(): w.destroy()
-        c = self.v5_colors
-        h = tk.Frame(self.main_container, bg=c["paper"], padx=50, pady=42)
-        h.pack(fill=tk.BOTH, expand=True)
-        hero = tk.Frame(h, bg=c["ink"], padx=34, pady=24)
-        hero.pack(fill=tk.X)
-        tk.Label(hero, text="Access DB Quality Control", font=("Segoe UI", 30, "bold"),
-                 bg=c["ink"], fg="white").pack(anchor=tk.W)
-        tk.Label(hero, text="VERS. 6 | registro DB visibile, promemoria periodi, risultati dashboard persistenti",
-                 font=("Segoe UI", 11, "bold"), bg=c["ink"], fg=c["mint"]).pack(anchor=tk.W, pady=(8, 0))
-        tk.Label(hero, text="v6.0", font=("Segoe UI", 22, "bold"),
-                 bg=c["gold"], fg=c["ink"], padx=18, pady=4).place(relx=1.0, rely=0.0, anchor="ne")
-        
-        bf = tk.Frame(h, bg=c["paper"])
-        bf.pack(pady=36)
-        
-        def go_builder():
-            self._build_layout()
-            self.nb.select(self.tab_build)
-
-        def go_dash():
-            self._build_layout()
-            self.nb.select(self.tab_dash)
-
-        tk.Button(bf, text="COSTRUTTORE\n\nconfigura controlli", font=("Segoe UI", 12, "bold"),
-                  width=24, height=6, bg=c["lavender"], fg=c["ink"], activebackground="#DEE3FF",
-                  relief=tk.FLAT, command=go_builder).pack(side=tk.LEFT, padx=15)
-        tk.Button(bf, text="DASHBOARD V6\n\nlancia batch e riapri esiti", font=("Segoe UI", 12, "bold"),
-                  width=24, height=6, bg=c["mint"], fg=c["accent_dark"], activebackground="#C9F0E1",
-                  relief=tk.FLAT, command=go_dash).pack(side=tk.LEFT, padx=15)
-        
-        tk.Label(h, text="Apri un database per modificare i controlli, oppure usa la Dashboard V6 per eseguire i gruppi/macrosettori.",
-                 bg=c["paper"], fg=c["accent_dark"], font=("Segoe UI", 10, "bold")).pack(pady=(0, 18))
-        self._build_shortcut_legend(h, 900)
-
     def _build_layout(self):
         for w in self.main_container.winfo_children(): w.destroy()
 
@@ -503,133 +404,6 @@ class App(tk.Tk):
 
         self.current_view.pack(fill=tk.BOTH, expand=True)
 
-    def _build_left_panel(self, parent):
-        f = ttk.Frame(parent, padding=5, style="V5Panel.TFrame")
-        f.pack(fill=tk.BOTH, expand=True)
-        
-        dbf = ttk.LabelFrame(f, text="Database", padding=5, style="V5.TLabelframe")
-        dbf.pack(fill=tk.X, pady=(0, 10))
-        self.lbl_db = ttk.Label(dbf, text="Nessun DB", font=("Segoe UI", 9, "bold"), wraplength=250, style="V5.TLabel")
-        self.lbl_db.pack(fill=tk.X)
-        
-        bb = ttk.Frame(dbf)
-        bb.pack(fill=tk.X, pady=5)
-        btn_open = ttk.Button(bb, text="Apri...", command=self._open_db)
-        btn_open.pack(side=tk.LEFT, padx=2)
-        btn_close = ttk.Button(bb, text="Chiudi", command=self._close_db)
-        btn_close.pack(side=tk.LEFT, padx=2)
-        self._mark_shortcut(btn_open, "a")
-        self._mark_shortcut(btn_close, "c")
-
-        regf = ttk.LabelFrame(f, text="Database Collegati V6", padding=5, style="V5.TLabelframe")
-        regf.pack(fill=tk.BOTH, pady=(0, 10))
-        self.db_registry_tree = ttk.Treeview(regf, columns=("label", "state"), show="headings", height=5, style="V6Tree.Treeview")
-        self.db_registry_tree.heading("label", text="Database")
-        self.db_registry_tree.heading("state", text="Stato")
-        self.db_registry_tree.column("label", width=135)
-        self.db_registry_tree.column("state", width=95, anchor=tk.CENTER)
-        reg_scroll = ttk.Scrollbar(regf, orient=tk.VERTICAL, command=self.db_registry_tree.yview)
-        self.db_registry_tree.configure(yscrollcommand=reg_scroll.set)
-        self.db_registry_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        reg_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.db_registry_tree.bind("<<TreeviewSelect>>", self._on_db_registry_select)
-        self.lbl_db_registry_path = ttk.Label(
-            regf,
-            text="Seleziona un database collegato per vedere il percorso.",
-            style="V5Hint.TLabel",
-            wraplength=240,
-            justify=tk.LEFT,
-        )
-        self.lbl_db_registry_path.pack(fill=tk.X, pady=(6, 0))
-        self._refresh_database_registry_ui()
-        
-        tf = ttk.LabelFrame(f, text="Tabelle", padding=5, style="V5.TLabelframe")
-        tf.pack(fill=tk.BOTH, expand=True)
-        s = ttk.Scrollbar(tf)
-        s.pack(side=tk.RIGHT, fill=tk.Y)
-        self.lst_tables = tk.Listbox(tf, yscrollcommand=s.set, font=("Consolas", 10), selectmode=tk.MULTIPLE)
-        self.lst_tables.pack(fill=tk.BOTH, expand=True)
-        s.config(command=self.lst_tables.yview)
-        self.lst_tables.bind("<<ListboxSelect>>", self._on_table_sel)
-        self._build_shortcut_legend(f, 240)
-
-    def _build_tab_insights(self):
-        f = ttk.Frame(self.tab_insights, padding=20)
-        f.pack(fill=tk.BOTH, expand=True)
-        
-        top_f = ttk.Frame(f)
-        top_f.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(top_f, text="Analisi e Suggerimenti Automatici", font=("Segoe UI", 14, "bold")).pack(side=tk.LEFT)
-        btn_profiler = ttk.Button(top_f, text="Genera Insight", command=self._run_profiler)
-        btn_profiler.pack(side=tk.RIGHT)
-        self._mark_shortcut(btn_profiler, "i")
-        
-        self.ins_tree = ttk.Treeview(f, show="headings", columns=["title", "desc", "action"])
-        self.ins_tree.heading("title", text="Suggerimento / Controllo")
-        self.ins_tree.heading("desc", text="Descrizione dell'Analisi")
-        self.ins_tree.heading("action", text="Tipo di Costruttore")
-        self.ins_tree.column("title", width=250)
-        self.ins_tree.column("desc", width=550)
-        self.ins_tree.column("action", width=150)
-        
-        vsb = ttk.Scrollbar(f, orient=tk.VERTICAL, command=self.ins_tree.yview)
-        self.ins_tree.configure(yscrollcommand=vsb.set)
-        
-        self.ins_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        self.ins_tree.bind("<Double-1>", self._load_insight)
-        self.current_insights = []
-        
-        self.ins_tip = ttk.Label(self.tab_insights, text="Doppio clic su un suggerimento per caricarlo nel costruttore", style="V5Hint.TLabel")
-        self.ins_tip.pack(fill=tk.X, padx=20, pady=(0, 10))
-
-    def _build_tab_dashboard(self):
-        f = ttk.Frame(self.tab_dash, padding=15, style="V5.TFrame")
-        f.pack(fill=tk.BOTH, expand=True)
-        top = ttk.Frame(f, style="V5.TFrame")
-        top.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(top, text="Dashboard V6 - Analisi Batch Multi-DB", style="V5Title.TLabel").pack(side=tk.LEFT)
-        ttk.Label(top, text="Macrosettore:").pack(side=tk.LEFT, padx=(20, 5))
-        self.var_macro_filter = tk.StringVar(value="Tutti")
-        self.cmb_macro_filter = ttk.Combobox(top, textvariable=self.var_macro_filter, state="readonly", width=28)
-        self.cmb_macro_filter.pack(side=tk.LEFT)
-        self.cmb_macro_filter.bind("<<ComboboxSelected>>", lambda _evt: self._refresh_dash())
-        btn_single = ttk.Button(top, text="RIESEGUI SELEZIONATO", command=self._run_selected_dashboard_check)
-        btn_single.pack(side=tk.RIGHT, padx=(0, 8))
-        btn_batch = ttk.Button(top, text="ESEGUI TUTTI I CONTROLLI", style="Accent.TButton", command=self._run_all_batch)
-        btn_batch.pack(side=tk.RIGHT)
-        self._mark_shortcut(btn_batch, "e")
-        ttk.Label(
-            f,
-            text="Doppio clic: apre l'ultimo risultato disponibile. Usa 'Riesegui selezionato' per lanciare di nuovo il controllo.",
-            style="V5Hint.TLabel",
-        ).pack(fill=tk.X, pady=(0, 8))
-        
-        self.dash_tree = ttk.Treeview(
-            f,
-            show="headings",
-            columns=["id", "group", "database", "name", "review", "tag", "type", "count", "status"],
-        )
-        self.dash_tree.heading("id", text="#"); self.dash_tree.column("id", width=40)
-        self.dash_tree.heading("group", text="Gruppo"); self.dash_tree.column("group", width=180)
-        self.dash_tree.heading("database", text="Database"); self.dash_tree.column("database", width=180)
-        self.dash_tree.heading("name", text="Controllo"); self.dash_tree.column("name", width=300)
-        self.dash_tree.heading("review", text="Periodo"); self.dash_tree.column("review", width=220)
-        self.dash_tree.heading("tag", text="Macrosettore"); self.dash_tree.column("tag", width=180)
-        self.dash_tree.heading("type", text="Tipo"); self.dash_tree.column("type", width=150)
-        self.dash_tree.heading("count", text="Risultati"); self.dash_tree.column("count", width=100)
-        self.dash_tree.heading("status", text="Stato"); self.dash_tree.column("status", width=150)
-        self.dash_tree.pack(fill=tk.BOTH, expand=True)
-        
-        self.dash_tree.tag_configure("error", background="#FFE1DD")
-        self.dash_tree.tag_configure("ok", background="#DDF7EE")
-        self.dash_tree.tag_configure("running", background="#FFF1BF")
-        
-        self.dash_tree.bind("<Double-1>", self._on_dash_double_click)
-
-        self._refresh_dash()
-
     def _get_dash_tree(self):
         if hasattr(self, "current_view") and hasattr(self.current_view, "dash_tree"):
             return self.current_view.dash_tree
@@ -654,136 +428,6 @@ class App(tk.Tk):
             self._start_dashboard_execution(idx, cond)
         except Exception as e:
             logger.error(f"Errore caricamento condizione da dash: {e}")
-
-    def _build_tab_builder(self):
-        f = ttk.Frame(self.tab_build, padding=10, style="V5.TFrame")
-        f.pack(fill=tk.BOTH, expand=True)
-        
-        cfg = ttk.LabelFrame(f, text="Configurazione V6", padding=10, style="V5.TLabelframe")
-        cfg.pack(fill=tk.X, pady=5)
-        
-        r1 = ttk.Frame(cfg)
-        r1.pack(fill=tk.X)
-        ttk.Label(r1, text="Tipo Analisi:").pack(side=tk.LEFT)
-        self.var_ctype = tk.StringVar()
-        self.cmb_ctype = ttk.Combobox(r1, textvariable=self.var_ctype, values=list(constants.CONDITION_TYPES.values()), state="readonly", width=40)
-        self.cmb_ctype.pack(side=tk.LEFT, padx=10)
-        self.cmb_ctype.bind("<<ComboboxSelected>>", self._on_ctype_change)
-        
-        # Point 3: Group Selection
-        self.group_sel = GroupSelector(cfg, self.group_store_adapter, self._load_group_conditions)
-        self.group_sel.pack(fill=tk.X, pady=(10, 0))
-        self.group_sel.bind("<<SaveGroup>>", self._on_save_group_request)
-
-        r2 = ttk.Frame(cfg)
-        r2.pack(fill=tk.X, pady=10)
-        ttk.Label(r2, text="Macrosettore:").pack(side=tk.LEFT)
-        self.var_lib_tag = tk.StringVar(value="Tutti")
-        self.cmb_lib_tag = ttk.Combobox(r2, textvariable=self.var_lib_tag, state="readonly", width=24)
-        self.cmb_lib_tag.pack(side=tk.LEFT, padx=(10, 20))
-        self.cmb_lib_tag.bind("<<ComboboxSelected>>", self._on_lib_filter_change)
-        ttk.Label(r2, text="Libreria:     ").pack(side=tk.LEFT)
-        self.var_saved = tk.StringVar()
-        self.cmb_saved = ttk.Combobox(r2, textvariable=self.var_saved, state="readonly", width=40)
-        self.cmb_saved.pack(side=tk.LEFT, padx=10)
-        self.cmb_saved.bind("<<ComboboxSelected>>", self._load_from_lib)
-        btn_manage = ttk.Button(r2, text="Gestisci...", command=self._open_manager)
-        btn_manage.pack(side=tk.LEFT)
-        self._mark_shortcut(btn_manage, "g")
-
-        # --- Bottoni azione sempre visibili in basso ---
-        bb = ttk.Frame(f, padding=(0, 5, 0, 0))
-        bb.pack(side=tk.BOTTOM, fill=tk.X)
-        ttk.Separator(f, orient="horizontal").pack(side=tk.BOTTOM, fill=tk.X)
-        ttk.Button(bb, text="▶  ESEGUI CONTROLLO", command=self._run_current).pack(side=tk.LEFT, padx=5)
-        ttk.Button(bb, text="💾  SALVA IN LIBRERIA", command=self._save_to_lib).pack(side=tk.LEFT, padx=5)
-        ttk.Button(bb, text="♻  AGGIORNA SALVATA", style="Action.TButton", command=self._update_to_lib).pack(side=tk.LEFT, padx=5)
-        ttk.Button(bb, text="🗑  PULISCI FORM", command=self._clear_builder).pack(side=tk.LEFT, padx=5)
-
-        # --- Area scrollabile per il builder dinamico ---
-        scroll_outer = ttk.Frame(f)
-        scroll_outer.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-
-        canvas = tk.Canvas(scroll_outer, borderwidth=0, highlightthickness=0)
-        vbar = ttk.Scrollbar(scroll_outer, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=vbar.set)
-
-        vbar.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # Frame interno che conterrà frm_dyn + col_selector
-        inner = ttk.Frame(canvas)
-        canvas_win = canvas.create_window((0, 0), window=inner, anchor="nw")
-
-        def _on_inner_configure(evt):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-        def _on_canvas_resize(evt):
-            canvas.itemconfig(canvas_win, width=evt.width)
-        def _on_mousewheel(evt):
-            canvas.yview_scroll(int(-1 * (evt.delta / 120)), "units")
-
-        inner.bind("<Configure>", _on_inner_configure)
-        canvas.bind("<Configure>", _on_canvas_resize)
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-        self.frm_dyn = ttk.Frame(inner, padding=5)
-        self.frm_dyn.pack(fill=tk.X)
-
-        self.col_selector = ColumnSelector(inner)
-        self.col_selector.pack(fill=tk.X, pady=5)
-
-        self._refresh_lib()
-
-    def _build_tab_results(self):
-        f = ttk.Frame(self.tab_res, padding=10)
-        f.pack(fill=tk.BOTH, expand=True)
-        
-        # Filtro Risultati
-        ff = ttk.Frame(f)
-        ff.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(ff, text="Filtra Risultati:").pack(side=tk.LEFT, padx=(0, 5))
-        self.var_res_filter = tk.StringVar()
-        self.ent_res_filter = ttk.Entry(ff, textvariable=self.var_res_filter)
-        self.ent_res_filter.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.ent_res_filter.bind("<KeyRelease>", self._apply_res_filter)
-        
-        self.res_lbl = ttk.Label(f, text="Nessun risultato", font=("Segoe UI", 12, "bold"))
-        self.res_lbl.pack(pady=5)
-        
-        tf = ttk.Frame(f)
-        tf.pack(fill=tk.BOTH, expand=True)
-        self.res_tree = ttk.Treeview(tf, show="headings", selectmode="extended")
-        vs = ttk.Scrollbar(tf, orient=tk.VERTICAL, command=self.res_tree.yview)
-        hs = ttk.Scrollbar(tf, orient=tk.HORIZONTAL, command=self.res_tree.xview)
-        self.res_tree.configure(yscrollcommand=vs.set, xscrollcommand=hs.set)
-        
-        self.res_tree.grid(row=0, column=0, sticky="nsew")
-        vs.grid(row=0, column=1, sticky="ns"); hs.grid(row=1, column=0, sticky="ew")
-        tf.rowconfigure(0, weight=1); tf.columnconfigure(0, weight=1)
-
-        # Context menu is created dynamically in _show_res_menu
-        self.res_tree.bind("<Button-3>", self._show_res_menu)
-
-    def _build_tab_monitor(self):
-        f = ttk.Frame(self.tab_monitor, padding=10)
-        f.pack(fill=tk.BOTH, expand=True)
-        
-        self.mon_tree = ttk.Treeview(f, show="headings", columns=["time", "check", "status", "count"])
-        for c in ["time", "check", "status", "count"]: 
-            self.mon_tree.heading(c, text=c.capitalize())
-        self.mon_tree.pack(fill=tk.BOTH, expand=True)
-        
-        bb = ttk.Frame(f, padding=10)
-        bb.pack(fill=tk.X)
-        self.btn_mon_start = ttk.Button(bb, text="AVVIA MONITOR", command=self._start_monitor)
-        self.btn_mon_start.pack(side=tk.LEFT, padx=5)
-        self.btn_mon_stop = ttk.Button(bb, text="FERMA", command=self._stop_monitor, state=tk.DISABLED)
-        self.btn_mon_stop.pack(side=tk.LEFT, padx=5)
-        btn_clear_log = ttk.Button(bb, text="PULISCI LOG", command=self._clear_mon_log)
-        btn_clear_log.pack(side=tk.RIGHT)
-        self._mark_shortcut(self.btn_mon_start, "v")
-        self._mark_shortcut(self.btn_mon_stop, "f")
-        self._mark_shortcut(btn_clear_log, "p")
 
     # --- LOGICA ---
 
