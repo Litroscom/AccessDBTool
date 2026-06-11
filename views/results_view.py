@@ -7,13 +7,14 @@ logger = logging.getLogger("AccessDBTool.ResultsView")
 
 
 class ResultsView(ttk.Frame):
-    def __init__(self, parent, state, result_controller):
+    def __init__(self, parent, state, result_controller, enable_fullscreen=True):
         super().__init__(parent)
         self.state = state
         self.result_ctrl = result_controller
         self._current_title = ""
         self._on_context_menu = None
         self._on_open_in_builder = None
+        self._enable_fullscreen = enable_fullscreen
         self._build_ui()
 
     def set_context_menu_callback(self, callback):
@@ -79,6 +80,11 @@ class ResultsView(ttk.Frame):
         ttk.Button(action_frame, text="Apri nel builder",
                    command=self._open_in_builder,
                    bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
+
+        if self._enable_fullscreen:
+            ttk.Button(action_frame, text="Apri a tutta pagina",
+                       command=self._open_fullscreen,
+                       bootstyle="info-outline").pack(side=tk.LEFT, padx=2)
 
     def _on_right_click(self, event):
         iid = self.res_tree.identify_row(event.y)
@@ -247,27 +253,62 @@ class ResultsView(ttk.Frame):
         self.state.status.set(f"Ultima operazione: Sostituzione massiva ({updated} record).")
         self._apply_filter()
 
-    def _add_similarity(self, mode):
+    def _builder_live(self):
+        """True solo se esiste un builder ancora valido (widget non distrutto).
+        Sulla dashboard il builder viene distrutto al cambio tab, quindi qui
+        risulta quasi sempre falso e le esclusioni passano per l'apertura nel
+        builder."""
         builder = self.state.active_builder
+        try:
+            return bool(builder) and builder.winfo_exists()
+        except Exception:
+            return False
+
+    def _route_exclusion_to_builder(self, pending):
+        """Senza builder vivo: apre la condizione nel builder portando con sé
+        la selezione, così l'utente la gestisce nel tab Controlli."""
         res = self.state.current_result
-        if not builder or not res:
+        cond = res.get("_condition") if res else None
+        if cond and self._on_open_in_builder:
+            self._on_open_in_builder(cond, pending)
+        else:
+            messagebox.showwarning(
+                "!", "Apri il controllo nel builder per gestire le esclusioni.",
+            )
+
+    def _add_similarity(self, mode):
+        res = self.state.current_result
+        if not res:
             return
-        cnt = self.result_ctrl.add_similarity_exceptions(
-            mode, res.get("columns", []), self._selected_rows(),
-            builder.get_exception_column() if hasattr(builder, "get_exception_column") else "",
-            builder,
-        )
-        self._notify_exclusions(cnt)
+        rows = self._selected_rows()
+        if not rows:
+            return messagebox.showwarning("Attenzione", "Seleziona almeno una riga.")
+        cols = res.get("columns", [])
+        if self._builder_live():
+            builder = self.state.active_builder
+            key_col = builder.get_exception_column() if hasattr(builder, "get_exception_column") else ""
+            cnt = self.result_ctrl.add_similarity_exceptions(mode, cols, rows, key_col, builder)
+            return self._notify_exclusions(cnt)
+        self._route_exclusion_to_builder({
+            "kind": "similarity", "mode": mode, "cols": cols, "rows": rows, "key_col": "",
+        })
 
     def _add_nonfuzzy(self, target_column=""):
-        builder = self.state.active_builder
         res = self.state.current_result
-        if not builder or not res:
+        if not res:
             return
-        cnt = self.result_ctrl.add_exceptions_from_rows(
-            res.get("columns", []), self._selected_rows(), builder, target_column,
-        )
-        self._notify_exclusions(cnt)
+        rows = self._selected_rows()
+        if not rows:
+            return messagebox.showwarning("Attenzione", "Seleziona almeno una riga.")
+        cols = res.get("columns", [])
+        if self._builder_live():
+            cnt = self.result_ctrl.add_exceptions_from_rows(
+                cols, rows, self.state.active_builder, target_column,
+            )
+            return self._notify_exclusions(cnt)
+        self._route_exclusion_to_builder({
+            "kind": "nonfuzzy", "cols": cols, "rows": rows, "target": target_column,
+        })
 
     def _notify_exclusions(self, cnt):
         if cnt > 0:
@@ -279,11 +320,6 @@ class ResultsView(ttk.Frame):
         res = self.state.current_result
         if not res:
             return
-        builder = self.state.active_builder
-        if not builder or not hasattr(builder, "add_exceptions"):
-            return messagebox.showwarning(
-                "!", "Carica/crea una condizione nel builder per aggiungere esclusioni.",
-            )
         if self.result_ctrl._current_result_condition_type() == "similarity_check":
             return messagebox.showinfo(
                 "Esclusioni",
@@ -296,3 +332,22 @@ class ResultsView(ttk.Frame):
             cond = self.state.current_result.get("_condition")
             if cond and self._on_open_in_builder:
                 self._on_open_in_builder(cond)
+            elif not cond:
+                messagebox.showinfo("Info", "Risultato senza condizione collegata: impossibile aprirlo nel builder.")
+
+    def _open_fullscreen(self):
+        res = self.state.current_result
+        if not res:
+            return messagebox.showinfo("Info", "Nessun risultato da visualizzare.")
+        top = tk.Toplevel(self.winfo_toplevel())
+        top.title(res.get("title", "Report"))
+        try:
+            top.state("zoomed")
+        except Exception:
+            top.geometry("1280x800")
+        fs = ResultsView(top, self.state, self.result_ctrl, enable_fullscreen=False)
+        fs.pack(fill=tk.BOTH, expand=True)
+        # Propaga il callback 'apri nel builder' anche alla finestra fullscreen.
+        fs._on_open_in_builder = self._on_open_in_builder
+        fs.show_results(res)
+        top.bind("<Escape>", lambda _e: top.destroy())

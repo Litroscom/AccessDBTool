@@ -3,15 +3,20 @@ from tkinter import ttk
 import logging
 
 import constants
-from ui_components import ColumnSelector, MultiConditionBuilder, PERIODIC_REVIEW_CYCLE_CHOICES
+from ui_components import (
+    ColumnSelector, MultiConditionBuilder, PERIODIC_REVIEW_CYCLE_CHOICES,
+)
 
 logger = logging.getLogger("AccessDBTool.BuilderView")
 
 
 class BuilderView(ttk.Frame):
-    def __init__(self, parent, app):
+    def __init__(self, parent, state, db_controller, library_controller=None, result_controller=None):
         super().__init__(parent)
-        self.app = app
+        self.state = state
+        self.db_ctrl = db_controller
+        self.library_ctrl = library_controller
+        self.result_ctrl = result_controller
         self._sections = {}
         self._filtro_widget = None
         self._esclusioni_widget = None
@@ -62,7 +67,7 @@ class BuilderView(ttk.Frame):
                    command=self._load_from_lib,
                    bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
         ttk.Button(lib_frame, text="Gestisci...",
-                   command=self.app._open_manager,
+                   command=self._open_manager,
                    bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
         ttk.Button(lib_frame, text="Gruppi...",
                    command=self._open_groups,
@@ -71,16 +76,16 @@ class BuilderView(ttk.Frame):
         action_bar = ttk.Frame(self)
         action_bar.pack(fill=tk.X, side=tk.BOTTOM)
         ttk.Button(action_bar, text="Pulisci",
-                   command=self.app._clear_builder,
+                   command=self._clear_builder,
                    bootstyle="secondary").pack(side=tk.LEFT, padx=2)
         ttk.Button(action_bar, text="Salva in Libreria",
-                   command=self.app._save_to_lib,
+                   command=self._save_to_lib,
                    bootstyle="success").pack(side=tk.LEFT, padx=2)
         ttk.Button(action_bar, text="Aggiorna Salvata",
-                   command=self.app._update_to_lib,
+                   command=self._update_to_lib,
                    bootstyle="warning").pack(side=tk.LEFT, padx=2)
         ttk.Button(action_bar, text="Esegui Controllo",
-                   command=self.app._run_current,
+                   command=self._run_current,
                    bootstyle="danger").pack(side=tk.RIGHT, padx=2)
 
         self.frm_dyn = ttk.Frame(self)
@@ -139,20 +144,20 @@ class BuilderView(ttk.Frame):
             self._build_section_periodicita(body)
 
     def _build_section_base(self, body):
-        if self.app.active_builder:
+        if self.state.active_builder:
             try:
-                self.app.active_builder.pack(in_=body, fill=tk.BOTH, expand=True)
+                self.state.active_builder.pack(in_=body, fill=tk.BOTH, expand=True)
             except Exception:
                 ttk.Label(body, text="Seleziona un tipo analisi per iniziare.").pack()
         else:
             ttk.Label(body, text="Seleziona un tipo analisi per iniziare.").pack()
 
     def _build_section_filtri(self, body):
-        if not self.app.active_builder:
+        if not self.state.active_builder:
             ttk.Label(body, text="Configura prima la sezione Base.").pack(pady=20)
             return
         try:
-            config = self.app.active_builder.get_config()
+            config = self.state.active_builder.get_config()
         except Exception:
             ttk.Label(body, text="Questo tipo di controllo non supporta filtri aggiuntivi.").pack(pady=20)
             return
@@ -161,8 +166,8 @@ class BuilderView(ttk.Frame):
         conditions = config.get("conditions", [])
 
         filtro = MultiConditionBuilder(
-            body, self.app.db,
-            on_table_change=self.app._on_builder_table_change,
+            body, self.state.db,
+            on_table_change=self._on_builder_table_change,
             title="Filtri (AND/OR)"
         )
         filtro.pack(fill=tk.BOTH, expand=True)
@@ -173,11 +178,11 @@ class BuilderView(ttk.Frame):
         self._filtro_widget = filtro
 
     def _build_section_esclusioni(self, body):
-        if not self.app.active_builder:
+        if not self.state.active_builder:
             ttk.Label(body, text="Configura prima la sezione Base.").pack(pady=20)
             return
         try:
-            config = self.app.active_builder.get_config()
+            config = self.state.active_builder.get_config()
         except Exception:
             ttk.Label(body, text="Questo tipo di controllo non supporta esclusioni.").pack(pady=20)
             return
@@ -186,8 +191,8 @@ class BuilderView(ttk.Frame):
         exclude_conditions = config.get("exclude_conditions", [])
 
         excl = MultiConditionBuilder(
-            body, self.app.db,
-            on_table_change=self.app._on_builder_table_change,
+            body, self.state.db,
+            on_table_change=self._on_builder_table_change,
             title="Esclusioni (opzionale)"
         )
         excl.pack(fill=tk.BOTH, expand=True)
@@ -207,11 +212,11 @@ class BuilderView(ttk.Frame):
             ttk.Label(body, text="Nessun selettore colonne disponibile.").pack()
 
     def _build_section_periodicita(self, body):
-        if not self.app.active_builder:
+        if not self.state.active_builder:
             ttk.Label(body, text="Configura prima la sezione Base.").pack(pady=20)
             return
         try:
-            config = self.app.active_builder.get_config()
+            config = self.state.active_builder.get_config()
         except Exception:
             config = {}
 
@@ -293,10 +298,10 @@ class BuilderView(ttk.Frame):
         self._periodicita_data = {}
 
     def _sync_builder_from_sections(self):
-        if not self.app.active_builder:
+        if not self.state.active_builder:
             return
         try:
-            config = self.app.active_builder.get_config()
+            config = self.state.active_builder.get_config()
         except Exception:
             return
 
@@ -332,7 +337,7 @@ class BuilderView(ttk.Frame):
                 pass
 
         try:
-            self.app.active_builder.set_config(config)
+            self.state.active_builder.set_config(config)
         except Exception:
             pass
 
@@ -366,14 +371,99 @@ class BuilderView(ttk.Frame):
         self._lbl_last_ack.config(
             text=f"Ultimo aggiornamento: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
         )
-        self.app.status.set("Aggiornamento periodico segnato come completato.")
+        self.state.status.set("Aggiornamento periodico segnato come completato.")
 
     def _on_ctype_change(self, _evt=None):
         ctype_name = self.cmb_ctype.get()
         rev = {v: k for k, v in constants.CONDITION_TYPES.items()}
-        self.app._active_ctype = rev.get(ctype_name)
-        self.app._update_builder_fields()
+        self.state.active_ctype = rev.get(ctype_name)
+        self._update_builder_fields()
         self._show_base()
+
+    def _on_builder_table_change(self, table):
+        self.state.sel_tables = [table]
+        if hasattr(self, "col_selector") and self.col_selector:
+            self.col_selector.set_columns(self.state.db.columns(table))
+
+    def _update_builder_fields(self):
+        parent = self.frm_dyn
+        if parent is None:
+            return
+        for w in parent.winfo_children():
+            w.destroy()
+        self.state.active_builder = None
+        if not self.state.active_ctype:
+            return
+
+        ctype = self.state.active_ctype
+        db = self.state.db
+        import ui_components
+
+        if ctype == "value_comparison":
+            self.state.active_builder = ui_components.ValueComparisonBuilder(parent, db, self._on_builder_table_change)
+        elif ctype == "duplicate_check":
+            self.state.active_builder = ui_components.DuplicateBuilder(parent, db, self._on_builder_table_change)
+        elif ctype == "similarity_check":
+            self.state.active_builder = ui_components.SimilarityBuilder(parent, db, self._on_builder_table_change)
+        elif ctype == "cross_table_existence":
+            self.state.active_builder = ui_components.CrossTableBuilder(parent, db, self._on_builder_table_change)
+        elif ctype == "formula_condition":
+            self.state.active_builder = ui_components.FormulaBuilder(parent, db, self._on_builder_table_change)
+        elif ctype == "concat_similarity":
+            self.state.active_builder = ui_components.ConcatSimilarityBuilder(parent, db, self._on_builder_table_change)
+        elif ctype == "linked_table_intersection":
+            self.state.active_builder = ui_components.LinkedTableBuilder(parent, db, self._on_builder_table_change)
+            if self.state.sel_tables:
+                self.state.active_builder.sec1.set_table(self.state.sel_tables[0])
+            if len(self.state.sel_tables) > 1:
+                self.state.active_builder.sec2.set_table(self.state.sel_tables[1])
+        elif ctype == "format_validation":
+            try:
+                self.state.active_builder = ui_components.FormatValidationBuilder(parent, db, self._on_builder_table_change)
+            except Exception as _e:
+                logger.error(f"FormatValidationBuilder init error: {_e}")
+                self.state.status.set(f"Errore builder: {_e}")
+        elif ctype == "daily_coverage_check":
+            try:
+                self.state.active_builder = ui_components.DailyCoverageBuilder(parent, db, self._on_builder_table_change)
+            except Exception as _e:
+                logger.error(f"DailyCoverageBuilder init error: {_e}")
+                self.state.status.set(f"Errore builder: {_e}")
+        elif ctype == "mandatory_record_check":
+            try:
+                self.state.active_builder = ui_components.MandatoryRecordBuilder(parent, db, self._on_builder_table_change)
+            except Exception as _e:
+                logger.error(f"MandatoryRecordBuilder init error: {_e}")
+                self.state.status.set(f"Errore builder: {_e}")
+        elif ctype == "dependent_condition_check":
+            try:
+                self.state.active_builder = ui_components.DependentConditionBuilder(parent, db, self._on_builder_table_change)
+            except Exception as _e:
+                logger.error(f"DependentConditionBuilder init error: {_e}")
+                self.state.status.set(f"Errore builder: {_e}")
+        elif ctype == "row_cross_column_check":
+            try:
+                self.state.active_builder = ui_components.RowCrossColumnBuilder(parent, db, self._on_builder_table_change)
+            except Exception as _e:
+                logger.error(f"RowCrossColumnBuilder init error: {_e}")
+                self.state.status.set(f"Errore builder: {_e}")
+        elif ctype == "lookup_validation":
+            try:
+                self.state.active_builder = ui_components.LookupValidationBuilder(parent, db, self._on_builder_table_change)
+            except Exception as _e:
+                logger.error(f"LookupValidationBuilder init error: {_e}")
+                self.state.status.set(f"Errore builder: {_e}")
+        elif ctype == "aggregate_threshold_check":
+            try:
+                self.state.active_builder = ui_components.AggregateThresholdBuilder(parent, db, self._on_builder_table_change)
+            except Exception as _e:
+                logger.error(f"AggregateThresholdBuilder init error: {_e}")
+                self.state.status.set(f"Errore builder: {_e}")
+
+        if self.state.active_builder:
+            self.state.active_builder.pack(fill=tk.BOTH, expand=True)
+        elif parent.winfo_ismapped():
+            ttk.Label(parent, text=f"Configurazione standard per: {self.cmb_ctype.get()}").pack()
 
     def _show_base(self):
         base = self._sections["base"]
@@ -387,21 +477,111 @@ class BuilderView(ttk.Frame):
         self._build_section_base(base["body"])
         base["built"] = True
 
+    def load_condition(self, cond):
+        """Carica una condizione (dict) nel builder: costruisce il widget del
+        tipo corretto e ne applica la configurazione. Usato sia dal pulsante
+        'Carica' della libreria sia dall'apertura nel builder dalla dashboard."""
+        if not cond:
+            return
+        if self.library_ctrl:
+            self.library_ctrl.load_cond_into_builder(cond)
+        self.sync_ctype()
+        self._on_ctype_change()
+        if self.state.active_builder and hasattr(self.state.active_builder, "set_config"):
+            config = {k: v for k, v in cond.items()
+                      if k not in ("name", "description", "tag", "type",
+                                    "display_columns", "saved_at", "updated_at",
+                                    "database_label", "_group_name", "table")}
+            try:
+                self.state.active_builder.set_config(config)
+            except Exception as e:
+                logger.warning("set_config in load_condition fallita: %s", e)
+
     def _load_from_lib(self):
-        self.app._load_from_lib()
+        if not self.library_ctrl:
+            return
+        sel = self.cmb_lib.get()
+        if not sel:
+            return
+        for cond in self.state.store.items:
+            if cond.get("name") == sel:
+                self.load_condition(cond)
+                break
+
+    def _clear_builder(self):
+        for w in self.frm_dyn.winfo_children():
+            w.destroy()
+        self.state.active_builder = None
+        self.state.active_ctype = None
+        self.cmb_ctype.set("")
+        self.state.var_saved.set("")
+        self.state.var_ctype.set("")
+        self.state.loaded_condition_idx = None
+        for section_id in list(self._sections.keys()):
+            section = self._sections[section_id]
+            for w in section["body"].winfo_children():
+                w.destroy()
+            section["built"] = False
+
+    def _open_manager(self):
+        if self.library_ctrl:
+            self.library_ctrl.open_manager()
 
     def _open_groups(self):
-        if hasattr(self.app, "group_sel"):
-            self.app.group_sel.open_dialog()
+        if self.library_ctrl:
+            self.library_ctrl.open_groups()
+
+    def _save_to_lib(self):
+        if not self.library_ctrl:
+            return
+        ctype = self.state.active_ctype
+        if not ctype:
+            from tkinter import messagebox
+            return messagebox.showwarning("!", "Seleziona tipo analisi")
+        self._sync_builder_from_sections()
+        config = self.state.active_builder.get_config() if self.state.active_builder else {}
+        display_cols = self.col_selector.get_selected() if hasattr(self, "col_selector") else []
+        from ui_components import ConditionSaveDialog
+        dialog = ConditionSaveDialog(
+            None, self.state.store,
+            default_name=self.state.var_saved.get(),
+            force_new=False,
+        )
+        if not dialog.result:
+            return
+        self.library_ctrl.save_to_lib(
+            dialog.result["name"],
+            dialog.result.get("description", ""),
+            dialog.result.get("tag", "").strip(),
+            ctype, config, display_cols,
+            self._periodicita_data or {},
+        )
+        self.refresh_lib()
+
+    def _update_to_lib(self):
+        if not self.library_ctrl:
+            return
+        self._sync_builder_from_sections()
+        ctype = self.state.active_ctype
+        config = self.state.active_builder.get_config() if self.state.active_builder else {}
+        display_cols = self.col_selector.get_selected() if hasattr(self, "col_selector") else []
+        self.library_ctrl.update_to_lib(ctype, config, display_cols)
+        self.refresh_lib()
+
+    def _run_current(self):
+        if not self.result_ctrl:
+            return
+        display_cols = self.col_selector.get_selected() if hasattr(self, "col_selector") else []
+        self.result_ctrl.run_current(display_cols)
 
     def refresh_lib(self):
-        names = self.app.store.names()
+        names = self.state.store.names()
         self.cmb_lib["values"] = names
-        if self.app.var_saved.get() not in names:
-            self.app.var_saved.set("")
+        if self.state.var_saved.get() not in names:
+            self.state.var_saved.set("")
 
     def sync_ctype(self):
-        if self.app._active_ctype:
-            ctype_label = constants.CONDITION_TYPES.get(self.app._active_ctype, "")
+        if self.state.active_ctype:
+            ctype_label = constants.CONDITION_TYPES.get(self.state.active_ctype, "")
             if ctype_label:
                 self.cmb_ctype.set(ctype_label)

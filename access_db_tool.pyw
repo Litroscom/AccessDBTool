@@ -286,15 +286,48 @@ class App(tk.Tk):
                     lambda res, v=view: v.after(0, v.show_results, res))
             if hasattr(view, "results_view"):
                 view.results_view.result_ctrl = self.result_ctrl
-                view.results_view.set_open_in_builder_callback(
-                    lambda cond: self.library_ctrl.load_cond_into_builder(cond)
-                )
+                view.results_view.set_open_in_builder_callback(self._open_cond_in_builder)
             view._refresh()
         elif tab_id == "db":
             if hasattr(view, "set_load_insight_callback"):
                 view.set_load_insight_callback(self._load_insight)
             if hasattr(view, "set_profiler_done_callback"):
                 view.set_profiler_done_callback(lambda: None)
+
+    def _open_cond_in_builder(self, cond, pending=None):
+        """Apre una condizione nel tab Controlli ricostruendo il builder.
+        Se 'pending' è presente (esclusione catturata dai risultati in
+        dashboard) la riapplica al builder appena costruito."""
+        if not cond:
+            return
+        self._switch_tab("controls")
+        view = self.current_view
+        if not hasattr(view, "load_condition"):
+            return
+        view.load_condition(cond)
+        if pending:
+            builder = self.state.active_builder
+            if builder is None:
+                messagebox.showwarning(
+                    "Esclusioni",
+                    "Condizione caricata, ma il builder non è disponibile per applicare le esclusioni.",
+                )
+                return
+            cnt = self.result_ctrl.apply_pending_exclusion(pending, builder)
+            if cnt > 0:
+                self.state.status.set(
+                    f"{cnt} esclusioni aggiunte nel builder. Premi 'Aggiorna Salvata' per renderle permanenti."
+                )
+                messagebox.showinfo(
+                    "Esclusioni",
+                    f"Aggiunte {cnt} esclusioni alla condizione nel builder.\n"
+                    "Premi 'Aggiorna Salvata' per salvarle in libreria.",
+                )
+            else:
+                messagebox.showinfo(
+                    "Esclusioni",
+                    "Nessuna nuova esclusione aggiunta (valori già presenti o non validi).",
+                )
 
     def _close_db(self):
         self.app_ctrl.stop_monitor()
@@ -347,10 +380,7 @@ class App(tk.Tk):
             if insight.get("action") == action:
                 cond = insight.get("condition")
                 if cond:
-                    self._switch_tab("controls")
-                    self.library_ctrl.load_cond_into_builder(cond)
-                    if hasattr(self.current_view, "_on_ctype_change"):
-                        self.current_view._on_ctype_change()
+                    self._open_cond_in_builder(cond)
                 break
 
     def _quit(self):

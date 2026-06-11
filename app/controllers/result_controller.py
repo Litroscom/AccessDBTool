@@ -165,6 +165,24 @@ class ResultController:
             return 0
         return builder.add_exceptions(vals_to_add, column=target or None)
 
+    def apply_pending_exclusion(self, pending, builder):
+        """Applica un'esclusione 'in sospeso' (catturata dai risultati in
+        dashboard) a un builder appena ricostruito nel tab Controlli.
+        Ritorna il numero di esclusioni aggiunte."""
+        if not pending or builder is None:
+            return 0
+        kind = pending.get("kind")
+        cols = pending.get("cols", [])
+        rows = pending.get("rows", [])
+        if kind == "similarity":
+            return self.add_similarity_exceptions(
+                pending.get("mode", ""), cols, rows,
+                pending.get("key_col", ""), builder,
+            )
+        return self.add_exceptions_from_rows(
+            cols, rows, builder, pending.get("target", ""),
+        )
+
     def resolve_non_fuzzy_exception_target(self, clicked_col=""):
         if not self.state.current_result:
             return ""

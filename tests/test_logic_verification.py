@@ -476,6 +476,29 @@ class AppLogicTests(unittest.TestCase):
         self.assertEqual(len(state.dash_state_by_key), 5)
         self.assertEqual(calls["n"], 5)
 
+    def test_apply_pending_exclusion_dispatches_by_kind(self):
+        ctrl = ResultController(SimpleNamespace(current_result=None, active_ctype="duplicate_check"))
+        # nonfuzzy: usa la colonna target sui valori di riga
+        b1 = DummyBuilder()
+        n1 = ctrl.apply_pending_exclusion(
+            {"kind": "nonfuzzy", "cols": ["ID", "Name"], "rows": [["10", "Mario"]], "target": "Name"},
+            b1,
+        )
+        self.assertEqual(n1, 1)
+        self.assertEqual(b1.exception_calls[0], (["Mario"], "Name"))
+        # similarity: split coppia valori
+        b2 = DummyBuilder()
+        n2 = ctrl.apply_pending_exclusion(
+            {"kind": "similarity", "mode": "pair_values",
+             "cols": ["ID_1", "Name_1", "ID_2", "Name_2", "Sim%"],
+             "rows": [[10, "Mario", 20, "Marco", "88.0"]], "key_col": "ID"},
+            b2,
+        )
+        self.assertEqual(n2, 1)
+        self.assertEqual(b2.exception_calls[0][0], ["Mario | Marco"])
+        # nessun builder -> 0
+        self.assertEqual(ctrl.apply_pending_exclusion({"kind": "nonfuzzy"}, None), 0)
+
     def test_similarity_exclusion_modes_are_split_correctly(self):
         builder = DummyBuilder()
         ctrl = ResultController(SimpleNamespace(current_result=None, active_ctype="similarity_check"))
