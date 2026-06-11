@@ -132,7 +132,9 @@ class ResultsView(ttk.Frame):
         m.add_command(label="Modifica record...", command=self._edit_record, state=edit_state)
         m.add_separator()
         m.add_command(label="Sostituzione Massiva...", command=self._bulk_replace, state=edit_state)
-        if builder and hasattr(builder, "add_exceptions"):
+        # Le esclusioni non richiedono un builder vivo: se manca, i gestori
+        # aprono la condizione nel builder portando la selezione.
+        if res.get("_condition") or (builder and hasattr(builder, "add_exceptions")):
             ctype = self.result_ctrl._current_result_condition_type()
             if ctype != "concat_similarity":
                 m.add_separator()

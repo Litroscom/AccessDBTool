@@ -483,19 +483,35 @@ class BuilderView(ttk.Frame):
         'Carica' della libreria sia dall'apertura nel builder dalla dashboard."""
         if not cond:
             return
+        # Tabella della condizione: deve restare collegata al builder, altrimenti
+        # le modifiche (es. aggiungere un filtro) partono senza tabella.
+        table = cond.get("table") or (cond.get("tables", [""])[0] if cond.get("tables") else "")
+        if table:
+            self.state.sel_tables = [table]
         if self.library_ctrl:
             self.library_ctrl.load_cond_into_builder(cond)
         self.sync_ctype()
         self._on_ctype_change()
         if self.state.active_builder and hasattr(self.state.active_builder, "set_config"):
+            # 'table' e 'display_columns' RESTANO nel config: i builder leggono
+            # c.get("table")/c.get("tables") per ripristinare la tabella.
             config = {k: v for k, v in cond.items()
                       if k not in ("name", "description", "tag", "type",
-                                    "display_columns", "saved_at", "updated_at",
-                                    "database_label", "_group_name", "table")}
+                                    "saved_at", "updated_at",
+                                    "database_label", "_group_name")}
             try:
                 self.state.active_builder.set_config(config)
             except Exception as e:
                 logger.warning("set_config in load_condition fallita: %s", e)
+        # Allinea il selettore colonne report alla tabella ripristinata.
+        if table and getattr(self, "col_selector", None) and self.state.db:
+            try:
+                self.col_selector.set_columns(self.state.db.columns(table))
+                disp = cond.get("display_columns") or []
+                if disp:
+                    self.col_selector.set_selected(disp)
+            except Exception as e:
+                logger.warning("aggiornamento col_selector in load_condition fallito: %s", e)
 
     def _load_from_lib(self):
         if not self.library_ctrl:
