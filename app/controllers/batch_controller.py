@@ -1,6 +1,8 @@
 import threading
 import logging
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from tkinter import messagebox
 
 from db_manager import DatabaseManager
@@ -16,6 +18,7 @@ class BatchController:
         self.result_ctrl = result_controller
         self._on_log = None
         self._on_progress = None
+        self._on_dash_update = None
 
     def set_log_callback(self, callback):
         self._on_log = callback
@@ -23,8 +26,10 @@ class BatchController:
     def set_progress_callback(self, callback):
         self._on_progress = callback
 
+    def set_dash_update_callback(self, callback):
+        self._on_dash_update = callback
+
     def _log(self, message):
-        from datetime import datetime
         ts = datetime.now().strftime("%H:%M:%S")
         log_line = f"[{ts}] {message}"
         logger.info(log_line)
@@ -54,6 +59,28 @@ class BatchController:
                 label = resolved_label
             db_paths[label] = path
         return db_paths
+
+    def condition_cache_key(self, cond):
+        payload = {}
+        for key, value in dict(cond or {}).items():
+            if key in ("saved_at", "updated_at", "_group_name"):
+                continue
+            payload[key] = value
+        return json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+
+    def dashboard_state_for_condition(self, cond):
+        return self.state.get_dash_state(self.condition_cache_key(cond), {})
+
+    def set_dashboard_state(self, cond, count, status, tag, result=None):
+        state = {
+            "count": count,
+            "status": status,
+            "tag": tag,
+            "result": result,
+            "updated_at": datetime.now().isoformat(),
+        }
+        self.state.set_dash_state(self.condition_cache_key(cond), state)
+        return state
 
     def run_all_batch(self):
         if self.state.batch_running:
@@ -117,18 +144,56 @@ class BatchController:
                     if isinstance(res, dict):
                         res["_condition"] = dict(cond)
                         res["_condition_type"] = cond.get("type")
-                    count = res["count"]
+                    count = res.get("count", 0)
                     tag = "error" if count > 0 else "ok"
+                    state = {"count": count, "status": "Completato", "tag": tag, "result": res}
+                    self.state.set_dash_state(self.condition_cache_key(cond), state)
                     self._log(f"{name} -> {count} anomalie")
                 except Exception as e:
                     logger.error(f"Errore batch su '{name}' [{database_label}]: {e}")
-                    count = "ERR"
                     tag = "error"
-                    res = None
+                    state = {"count": "ERR", "status": "Errore", "tag": "error", "result": None}
+                    self.state.set_dash_state(self.condition_cache_key(cond), state)
                     self._log(f"{name} -> ERRORE: {e}")
+                if self._on_dash_update:
+                    self._on_dash_update()
         finally:
             db.disconnect()
 
     def cancel_batch(self):
         self.state.batch_running = False
         self._log("Batch annullato dall'utente.")
+
+    def run_selected_dashboard_check(self, cond):
+        if not self.state.batch_running:
+            self.state.batch_running = True
+        threading.Thread(target=self._execute_dashboard_task, args=(dict(cond),), daemon=True).start()
+
+    def _execute_dashboard_task(self, cond):
+        name = cond.get("name", "")
+        self._log(f"Esecuzione: {name}")
+        try:
+            db_label = str(cond.get("database_label", "") or "").strip()
+            if db_label:
+                self.db_ctrl.ensure_active_database_for_label(db_label, interactive=True)
+            res = self.state.executor.run(cond)
+            if isinstance(res, dict):
+                res["_condition"] = cond
+                res["_condition_type"] = cond.get("type")
+            count = res.get("count", 0)
+            tag = "error" if count > 0 else "ok"
+            self.set_dashboard_state(cond, count, "Completato", tag, result=res)
+            self._log(f"{name} -> {count} anomalie")
+            if self._on_results_callback:
+                self._on_results_callback(res)
+        except Exception as e:
+            logger.error(f"Errore esecuzione '{name}': {e}")
+            self.set_dashboard_state(cond, "ERR", "Errore", "error")
+            self._log(f"{name} -> ERRORE: {e}")
+        finally:
+            if self._on_dash_update:
+                self._on_dash_update()
+
+    @property
+    def _on_results_callback(self):
+        return self.result_ctrl._on_results_callback

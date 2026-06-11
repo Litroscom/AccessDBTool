@@ -13,6 +13,11 @@ except ImportError:
 
 logger = logging.getLogger("AccessDBTool.Engines")
 
+
+def _qi(name):
+    """Quota un identificatore SQL in modo sicuro per Access (escape della parentesi chiusa)."""
+    return "[" + str(name).replace("]", "]]") + "]"
+
 class SimilarityEngine:
     @staticmethod
     def ratio(a, b):
@@ -105,6 +110,9 @@ class SimilarityEngine:
                     "tokens": set(val.upper().split()) if need_tokens else None,
                     "phonetic": SimilarityEngine.italian_phonetic(val) if check_phonetic else None,
                 })
+
+        if len(items) > 50000:
+            logger.warning(f"find_similar: {len(items)} stringhe, possibile lentezza O(n^2)")
 
         # OTTIMIZZAZIONE: ordina per lunghezza stringa.
         # Permette di interrompere il ciclo interno (break) appena la differenza
@@ -293,7 +301,7 @@ class ConditionExecutor:
             
             val_s = str(val)
             if op in ("IS NULL", "IS NOT NULL"):
-                clause = prefix + "[" + col + "] " + op
+                clause = prefix + _qi(col) + " " + op
             else:
                 current_op = op
                 # Supporto Jolly (*)
@@ -308,7 +316,7 @@ class ConditionExecutor:
                 
                 val_param = val_s
                 
-                clause = prefix + "[" + col + "] " + current_op + " ?"
+                clause = prefix + _qi(col) + " " + current_op + " ?"
                 params.append(val_param)
             
             if not where_expr:
@@ -335,7 +343,7 @@ class ConditionExecutor:
     def _build_select(self, display_cols, alias=""):
         if not display_cols: return alias + ".*" if alias else "*"
         prefix = alias + "." if alias else ""
-        return ", ".join([prefix + "[" + dc + "]" for dc in display_cols])
+        return ", ".join([prefix + _qi(dc) for dc in display_cols])
 
     def _condition_columns(self, *condition_groups):
         cols = []
@@ -402,7 +410,7 @@ class ConditionExecutor:
 
         where_str, params = self._build_condition_clause(conditions, exclude_conditions, "s")
         select_str = self._build_select(display_cols, "s")
-        exists_parts = [f"EXISTS (SELECT 1 FROM [{d['table']}] AS {self._safe_alias(d['table'])} WHERE {self._safe_alias(d['table'])}.[{d['key']}] = s.[{k1}])" for d in destinations]
+        exists_parts = [f"EXISTS (SELECT 1 FROM {_qi(d['table'])} AS {self._safe_alias(d['table'])} WHERE {self._safe_alias(d['table'])}.{_qi(d['key'])} = s.{_qi(k1)})" for d in destinations]
 
         if dest_logic == "ALMENO_UNA": combined, desc_prefix = "NOT (" + " OR ".join(exists_parts) + ")", "NON presente in nessuna tra: "
         elif dest_logic == "TUTTE": combined, desc_prefix = "(" + " OR ".join(["NOT " + ep for ep in exists_parts]) + ")", "Mancante da almeno una tra: "
@@ -410,7 +418,7 @@ class ConditionExecutor:
         else: combined, desc_prefix = "NOT (" + " OR ".join(exists_parts) + ")", "NON presente in: "
 
         where_clause = f"({where_str}) AND {combined}" if where_str else combined
-        sql = f"SELECT {select_str} FROM [{t1}] AS s WHERE {where_clause}"
+        sql = f"SELECT {select_str} FROM {_qi(t1)} AS s WHERE {where_clause}"
         cols, rows = self.db.fetch(sql, params or None)
         desc = self._describe_condition_sets(conditions, exclude_conditions) + " -> " + desc_prefix + ", ".join([d["table"] for d in destinations])
         return self._result(f"Cross: {t1} -> {len(destinations)} tabelle", desc, cols if cols else [k1], rows, t1)
@@ -427,7 +435,7 @@ class ConditionExecutor:
         conditions = c.get("conditions", [])
         exclude_conditions = c.get("exclude_conditions", [])
 
-        sql = f"SELECT [{key}], [{col}] FROM [{table}] WHERE [{col}] IS NOT NULL"
+        sql = f"SELECT {_qi(key)}, {_qi(col)} FROM {_qi(table)} WHERE {_qi(col)} IS NOT NULL"
         params = []
         if conditions or exclude_conditions:
             extra_where, extra_params = self._build_condition_clause(conditions, exclude_conditions)
@@ -442,7 +450,7 @@ class ConditionExecutor:
             dupe_keys = [item[0] for items in dupes.values() for item in items]
             if dupe_keys:
                 placeholders = ", ".join(["?" for _ in dupe_keys])
-                sql = f"SELECT {self._build_select(display_cols)} FROM [{table}] WHERE [{key}] IN ({placeholders})"
+                sql = f"SELECT {self._build_select(display_cols)} FROM {_qi(table)} WHERE {_qi(key)} IN ({placeholders})"
                 cols, rows = self.db.fetch(sql, dupe_keys)
                 title = ("Duplicati fonetici: " if check_phonetic else "Duplicati esatti: ") + table + "." + col
                 return self._result(title, "Sound-Alike" if check_phonetic else "Esatti", cols, rows, table)
@@ -459,7 +467,7 @@ class ConditionExecutor:
         check_cont, check_prefix, check_phonetic = c.get("check_containment", False), c.get("check_prefix", False), c.get("check_phonetic", False)
         min_prefix = c.get("min_prefix", 3)
         
-        sql, params = f"SELECT [{key}], [{col}] FROM [{table}] WHERE [{col}] IS NOT NULL", []
+        sql, params = f"SELECT {_qi(key)}, {_qi(col)} FROM {_qi(table)} WHERE {_qi(col)} IS NOT NULL", []
         conditions = c.get("conditions", [])
         exclude_conditions = c.get("exclude_conditions", [])
         if conditions or exclude_conditions:
@@ -472,7 +480,7 @@ class ConditionExecutor:
         if display_cols and matches:
             key_list = list(set([m["key1"] for m in matches] + [m["key2"] for m in matches]))
             placeholders = ", ".join(["?" for _ in key_list])
-            sql = f"SELECT [{key}], {self._build_select(display_cols)} FROM [{table}] WHERE [{key}] IN ({placeholders})"
+            sql = f"SELECT {_qi(key)}, {self._build_select(display_cols)} FROM {_qi(table)} WHERE {_qi(key)} IN ({placeholders})"
             try:
                 _, extra_rows = self.db.fetch(sql, key_list)
                 extra_map = {str(r[0]): [r[i+1] for i, dc in enumerate(display_cols) if dc != key and dc != col] for r in extra_rows}
@@ -505,15 +513,17 @@ class ConditionExecutor:
                 is_match = False
             return (not is_match) if operator == "NOT REGEXP" else is_match
         elif operator == "LIKE":
+            # Semantica allineata al path SQL (_build_where): %val% = substring,
+            # quindi usiamo re.search (non fullmatch).
             pattern = val_cond_s.replace("%", ".*").replace("_", ".")
             try:
-                return bool(re.fullmatch(pattern, val_db_s, re.IGNORECASE))
+                return bool(re.search(pattern, val_db_s, re.IGNORECASE))
             except Exception:
                 return False
         elif operator == "NOT LIKE":
             pattern = val_cond_s.replace("%", ".*").replace("_", ".")
             try:
-                return not bool(re.fullmatch(pattern, val_db_s, re.IGNORECASE))
+                return not bool(re.search(pattern, val_db_s, re.IGNORECASE))
             except Exception:
                 return True
         else:
@@ -610,7 +620,7 @@ class ConditionExecutor:
             # Se è solo AND, scarichiamo filtrati dai campi non-regex e raffiniamo
             if has_or:
                 # Scarichiamo tutto, filtriamo tutto lato Python
-                query = f"SELECT {sel} FROM [{table}]"
+                query = f"SELECT {sel} FROM {_qi(table)}"
                 cols, rows = self.db.fetch(query)
 
                 rows = [
@@ -620,7 +630,7 @@ class ConditionExecutor:
             else:
                 # AND-only: filtra i non-regex via SQL, poi i regex in Python
                 where, params = self._build_where(conditions, skip_regex=True)
-                query = f"SELECT {sel} FROM [{table}]"
+                query = f"SELECT {sel} FROM {_qi(table)}"
                 if where: query += f" WHERE {where}"
                 cols, rows = self.db.fetch(query, params)
 
@@ -630,7 +640,7 @@ class ConditionExecutor:
                 ]
         else:
             where, params = self._build_condition_clause(conditions, exclude_conditions)
-            query = f"SELECT {sel} FROM [{table}]"
+            query = f"SELECT {sel} FROM {_qi(table)}"
             if where: query += f" WHERE {where}"
             cols, rows = self.db.fetch(query, params)
 
@@ -666,7 +676,7 @@ class ConditionExecutor:
             t = s["table"]
             col = s["column"]
             key = s.get("key_column", col)
-            sql = f"SELECT [{key}], [{col}] FROM [{t}] WHERE [{col}] IS NOT NULL"
+            sql = f"SELECT {_qi(key)}, {_qi(col)} FROM {_qi(t)} WHERE {_qi(col)} IS NOT NULL"
             extra_params = []
             if conditions or exclude_conditions:
                 extra_where, extra_params = self._build_condition_clause(conditions, exclude_conditions)
@@ -693,7 +703,7 @@ class ConditionExecutor:
         if not table or not formula:
             return self._error("Tabella o Formula mancante.")
             
-        sql = f"SELECT {self._build_select(display_cols)} FROM [{table}] WHERE {formula}"
+        sql = f"SELECT {self._build_select(display_cols)} FROM {_qi(table)} WHERE {formula}"
         try:
             cols, rows = self.db.fetch(sql)
             return self._result(f"Formula: {table}", f"WHERE {formula}", cols, rows, table)
@@ -726,7 +736,7 @@ class ConditionExecutor:
         sel = self._build_select(display_cols, alias=a1)
         
         # Costruzione query con alias espliciti
-        sql = f"SELECT {sel} FROM [{t1}] AS {a1} WHERE "
+        sql = f"SELECT {sel} FROM {_qi(t1)} AS {a1} WHERE "
         
         # Filtri tabella principale
         where_parts = []
@@ -735,11 +745,11 @@ class ConditionExecutor:
         
         # Subquery con collegamento su chiavi
         # t2.[k2] = t1.[k1]
-        sub_sql = f"EXISTS (SELECT 1 FROM [{t2}] AS {a2} WHERE {a2}.[{k2}] = {a1}.[{k1}]"
+        sub_sql = f"EXISTS (SELECT 1 FROM {_qi(t2)} AS {a2} WHERE {a2}.{_qi(k2)} = {a1}.{_qi(k1)}"
         if where2:
             sub_sql += f" AND ({where2})"
         sub_sql += ")"
-        
+
         where_parts.append(sub_sql)
         sql += " AND ".join(where_parts)
         
@@ -777,7 +787,7 @@ class ConditionExecutor:
             return self._error("Tabella e Colonna Giorno richieste.")
             
         where, params = self._build_condition_clause(conds, excl_conds)
-        sql = f"SELECT DISTINCT [{col_day}] FROM [{t1}] WHERE [{col_day}] IS NOT NULL"
+        sql = f"SELECT DISTINCT {_qi(col_day)} FROM {_qi(t1)} WHERE {_qi(col_day)} IS NOT NULL"
         if where:
             sql += f" AND {where}"
             
@@ -847,7 +857,7 @@ class ConditionExecutor:
         where1, params1 = self._build_condition_clause(conds1, excl_conds1, alias=a1)
         
         # We only need to check if AT LEAST ONE record exists.
-        sql = f"SELECT TOP 1 1 FROM [{t1}] AS {a1}"
+        sql = f"SELECT TOP 1 1 FROM {_qi(t1)} AS {a1}"
         where_parts = []
         if where1:
             where_parts.append(f"({where1})")
@@ -857,7 +867,7 @@ class ConditionExecutor:
         if t2:
             if not k1: return self._error("Chiave di collegamento src mancante per la destinazione.")
             where2, params2 = self._build_condition_clause(conds2, excl_conds2, alias=a2)
-            sub_sql = f"EXISTS (SELECT 1 FROM [{t2}] AS {a2} WHERE {a2}.[{k2}] = {a1}.[{k1}]"
+            sub_sql = f"EXISTS (SELECT 1 FROM {_qi(t2)} AS {a2} WHERE {a2}.{_qi(k2)} = {a1}.{_qi(k1)}"
             if where2:
                 sub_sql += f" AND ({where2})"
             sub_sql += ")"
@@ -911,7 +921,7 @@ class ConditionExecutor:
 
         if has_regex:
             # Fallback Python completo
-            query = f"SELECT {sel} FROM [{table}]"
+            query = f"SELECT {sel} FROM {_qi(table)}"
             cols, rows = self.db.fetch(query)
             out = []
             for row in rows:
@@ -924,7 +934,7 @@ class ConditionExecutor:
             cons_where, cons_params = self._build_where(consequent)
             # Violazione = ante_ok AND NOT cons_ok
             where = f"({ante_where}) AND NOT ({cons_where})"
-            query = f"SELECT {sel} FROM [{table}] WHERE {where}"
+            query = f"SELECT {sel} FROM {_qi(table)} WHERE {where}"
             params = ante_params + cons_params
             cols, out = self.db.fetch(query, params)
 
@@ -965,9 +975,9 @@ class ConditionExecutor:
         params = []
 
         if ignore_nulls:
-            where_parts.append(f"[{left_col}] IS NOT NULL AND [{right_col}] IS NOT NULL")
+            where_parts.append(f"{_qi(left_col)} IS NOT NULL AND {_qi(right_col)} IS NOT NULL")
 
-        where_parts.append(f"[{left_col}] {neg_op} [{right_col}]")
+        where_parts.append(f"{_qi(left_col)} {neg_op} {_qi(right_col)}")
 
         extra_where, extra_params = self._build_condition_clause(conditions, exclude_conditions)
         if extra_where:
@@ -975,7 +985,7 @@ class ConditionExecutor:
             params.extend(extra_params)
 
         where = " AND ".join(f"({p})" for p in where_parts)
-        query = f"SELECT {sel} FROM [{table}] WHERE {where}"
+        query = f"SELECT {sel} FROM {_qi(table)} WHERE {where}"
 
         try:
             cols, rows = self.db.fetch(query, params if params else None)
@@ -1022,12 +1032,12 @@ class ConditionExecutor:
             all_display = [column] + all_display
 
         sel = self._build_select(all_display)
-        query = f"SELECT {sel} FROM [{table}]"
+        query = f"SELECT {sel} FROM {_qi(table)}"
 
         where_parts = []
         params = []
         if ignore_empty:
-            where_parts.append(f"[{column}] IS NOT NULL")
+            where_parts.append(f"{_qi(column)} IS NOT NULL")
         extra_where, extra_params = self._build_condition_clause(conditions, exclude_conditions)
         if extra_where:
             where_parts.append(extra_where)
@@ -1108,17 +1118,17 @@ class ConditionExecutor:
             return self._error(f"Operatore non valido: {operator}")
 
         # Costruzione SELECT
-        group_cols_sql = ", ".join(f"[{g}]" for g in group_by)
+        group_cols_sql = ", ".join(_qi(g) for g in group_by)
         if agg_function == "COUNT":
             agg_expr = "COUNT(*)"
         else:
-            agg_expr = f"{agg_function}([{agg_column}])"
+            agg_expr = f"{agg_function}({_qi(agg_column)})"
 
         sel = f"{group_cols_sql}, {agg_expr} AS AggVal"
 
         # WHERE (pre-filtri)
         where_str, params = self._build_condition_clause(conditions, exclude_conditions)
-        query = f"SELECT {sel} FROM [{table}]"
+        query = f"SELECT {sel} FROM {_qi(table)}"
         if where_str:
             query += f" WHERE {where_str}"
         query += f" GROUP BY {group_cols_sql} HAVING {agg_expr} {operator} ?"

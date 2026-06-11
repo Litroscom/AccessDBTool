@@ -1,5 +1,9 @@
+import threading
+
+
 class AppState:
     def __init__(self):
+        self._lock = threading.Lock()
         self.db = None
         self.executor = None
         self.store = None
@@ -7,6 +11,7 @@ class AppState:
         self.db_registry = None
         self.monitor = None
         self.monitor_queue = None
+        self.mon_log = None
         self.current_result = None
         self.active_builder = None
         self.active_ctype = None
@@ -22,3 +27,16 @@ class AppState:
         self.var_ctype = None
         self.var_saved = None
         self.var_lib_tag = None
+
+    # Accesso sincronizzato allo stato dashboard condiviso tra UI e worker batch.
+    def set_dash_state(self, key, value):
+        with self._lock:
+            self.dash_state_by_key[key] = value
+
+    def get_dash_state(self, key, default=None):
+        with self._lock:
+            return self.dash_state_by_key.get(key, default)
+
+    def dash_state_snapshot(self):
+        with self._lock:
+            return dict(self.dash_state_by_key)

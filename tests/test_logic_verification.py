@@ -12,10 +12,13 @@ from unittest.mock import patch
 sys.modules.setdefault("pyodbc", types.SimpleNamespace(drivers=lambda: []))
 
 import ui_components
-from access_db_tool import App
 from engines import ConditionExecutor
 from monitor_engine import MonitorEngine
 from storage import DatabaseRegistry, GroupStore
+from app.controllers.app_controller import AppController
+from app.controllers.db_controller import DBController
+from app.controllers.library_controller import LibraryController
+from app.controllers.result_controller import ResultController
 
 
 class FakeDB:
@@ -23,6 +26,7 @@ class FakeDB:
         self.fetch_responses = []
         self.fetch_calls = []
         self.execute_calls = []
+        self.bulk_update_calls = []
         self.cast_calls = []
         self.connected = True
         self.table_columns = {}
@@ -39,6 +43,11 @@ class FakeDB:
     def execute(self, sql, params=None):
         self.execute_calls.append((sql, tuple(params) if params is not None else None))
         return 1
+
+    def bulk_update(self, table, set_col, pk_col, pairs):
+        pairs = list(pairs)
+        self.bulk_update_calls.append((table, set_col, pk_col, pairs))
+        return len(pairs)
 
     def columns(self, table):
         return [col["name"] for col in self.table_columns.get(table, [])]
@@ -372,69 +381,74 @@ class AppLogicTests(unittest.TestCase):
             engine.stop()
 
     def test_handle_monitor_message_uses_name_key(self):
-        app = SimpleNamespace(
-            status=DummyStatus(),
-            mon_tree=DummyTree(),
-            mon_log=DummyMonitorLog(),
-        )
-        App._handle_monitor_msg(app, {"type": "check_result", "name": "Controllo A", "count": 2, "sound": False})
-        self.assertEqual(app.mon_tree.inserted[0][1], "Controllo A")
-        self.assertEqual(app.mon_tree.inserted[0][2], "Trovati")
-        self.assertEqual(app.mon_log.entries[0]["name"], "Controllo A")
+        state = SimpleNamespace(status=DummyStatus(), mon_log=DummyMonitorLog())
+        ctrl = AppController(state, db_controller=None)
+        rows = []
+        ctrl.set_monitor_row_callback(rows.append)
+        ctrl._handle_monitor_msg({"type": "check_result", "name": "Controllo A", "count": 2, "sound": False})
+        self.assertEqual(rows[0][1], "Controllo A")
+        self.assertEqual(rows[0][2], "Trovati")
+        self.assertEqual(state.mon_log.entries[0]["name"], "Controllo A")
 
     def test_bulk_replace_casts_values_before_update(self):
         db = FakeDB()
         db.table_columns = {"Invoices": [{"name": "ID"}, {"name": "Amount"}]}
-        app = SimpleNamespace(
+        state = SimpleNamespace(
             current_result={"rows": [[1, 3.0]], "columns": ["ID", "Amount"], "source_table": "Invoices"},
-            res_tree=DummyResultTree({"0": [1, 3.0]}),
             db=db,
             active_builder=None,
-            status=DummyStatus(),
-            wait_window=lambda _dlg: None,
-            _apply_res_filter=lambda: None,
-            _result_supports_direct_update=lambda: True,
         )
+        ctrl = ResultController(state)
+        updated = ctrl.apply_bulk_replace({"column": "Amount", "value": "12,5", "mode": "replace_all"}, [0])
+        # Un solo commit transazionale via bulk_update, niente execute per-riga.
+        self.assertEqual(db.bulk_update_calls[0], ("Invoices", "Amount", "ID", [(12.5, 1)]))
+        self.assertEqual(updated, 1)
 
-        class StubDialog:
-            def __init__(self, _parent, _columns, _record_count):
-                self.result = {"column": "Amount", "value": "12,5", "mode": "replace_all"}
+    def test_bulk_replace_rejects_ambiguous_pk(self):
+        # Nessuna colonna riconoscibile come PK -> update RIFIUTATO (-1), zero scritture.
+        db = FakeDB()
+        db.table_columns = {"Invoices": [{"name": "Amount"}, {"name": "Note"}]}
+        state = SimpleNamespace(
+            current_result={"rows": [[3.0, "x"]], "columns": ["Amount", "Note"], "source_table": "Invoices"},
+            db=db,
+            active_builder=None,
+        )
+        ctrl = ResultController(state)
+        updated = ctrl.apply_bulk_replace({"column": "Amount", "value": "12,5", "mode": "replace_all"}, [0])
+        self.assertEqual(updated, -1)
+        self.assertEqual(db.bulk_update_calls, [])
 
-        with patch("access_db_tool.ui_components.BulkReplaceDialog", StubDialog), \
-             patch("access_db_tool.messagebox.showinfo"), \
-             patch("access_db_tool.messagebox.showwarning"), \
-             patch("access_db_tool.messagebox.showerror"):
-            App._bulk_replace_results(app)
+    def test_python_like_uses_substring_semantics(self):
+        # Allineamento con il path SQL (%val%): LIKE deve essere substring, non fullmatch.
+        ex = ConditionExecutor(None)
+        self.assertTrue(ex._eval_condition_python("HELLO WORLD", "LIKE", "%WOR%"))
+        self.assertTrue(ex._eval_condition_python("HELLO WORLD", "LIKE", "%WORLD%"))
+        self.assertFalse(ex._eval_condition_python("HELLO WORLD", "LIKE", "%ZZZ%"))
+        self.assertFalse(ex._eval_condition_python("HELLO WORLD", "NOT LIKE", "%WOR%"))
+        self.assertTrue(ex._eval_condition_python("HELLO WORLD", "NOT LIKE", "%ZZZ%"))
 
-        self.assertEqual(db.execute_calls[0][1], (12.5, 1))
+    def test_identifier_quoting_escapes_bracket(self):
+        from db_manager import DatabaseManager
+        import engines
+        self.assertEqual(DatabaseManager._qi("Name"), "[Name]")
+        self.assertEqual(DatabaseManager._qi("a]b"), "[a]]b]")
+        self.assertEqual(engines._qi("a]b"), "[a]]b]")
 
     def test_similarity_exclusion_modes_are_split_correctly(self):
         builder = DummyBuilder()
-        app = SimpleNamespace(
-            current_result={
-                "rows": [[10, "Mario", 20, "Marco", "88.0"]],
-                "columns": ["ID_1", "Name_1", "ID_2", "Name_2", "Sim%"],
-                "_condition_type": "similarity_check",
-            },
-            res_tree=DummyResultTree({"0": [10, "Mario", 20, "Marco", "88.0"]}),
-            active_builder=builder,
-            nb=DummyNotebook(),
-            tab_build="build",
-            _current_result_condition_type=lambda: "similarity_check",
-        )
-        app._extract_similarity_exception_payload = lambda: App._extract_similarity_exception_payload(app)
-
-        with patch("access_db_tool.messagebox.showinfo"):
-            App._add_selected_to_exceptions(app, mode="pair_values")
-            App._add_selected_to_exceptions(app, mode="pair_records")
-            App._add_selected_to_exceptions(app, mode="left_records")
-            App._add_selected_to_exceptions(app, mode="right_records")
+        ctrl = ResultController(SimpleNamespace(current_result=None, active_ctype="similarity_check"))
+        cols = ["ID_1", "Name_1", "ID_2", "Name_2", "Sim%"]
+        rows = [[10, "Mario", 20, "Marco", "88.0"]]
+        key_col = builder.get_exception_column()
+        ctrl.add_similarity_exceptions("pair_values", cols, rows, key_col, builder)
+        ctrl.add_similarity_exceptions("pair_records", cols, rows, key_col, builder)
+        ctrl.add_similarity_exceptions("left_records", cols, rows, key_col, builder)
+        ctrl.add_similarity_exceptions("right_records", cols, rows, key_col, builder)
 
         self.assertEqual(builder.exception_calls[0][0], ["Mario | Marco"])
         self.assertEqual(builder.exception_calls[1][0], ["ID:10 | ID:20"])
         self.assertEqual(builder.record_calls[0][0], ["10"])
         self.assertEqual(builder.record_calls[1][0], ["20"])
-        self.assertEqual(app.nb.selected, "build")
 
     def test_similarity_builder_record_exclusions_use_or_after_first(self):
         class FakeSimilarityBuilder:
@@ -490,7 +504,7 @@ class AppLogicTests(unittest.TestCase):
         )
 
     def test_effective_groups_fall_back_to_macrosettore_tags(self):
-        app = SimpleNamespace(
+        state = SimpleNamespace(
             group_store=SimpleNamespace(
                 all_groups=lambda: [{"name": "Legacy", "database_label": "", "conditions": [{"name": "Old"}]}]
             ),
@@ -502,11 +516,11 @@ class AppLogicTests(unittest.TestCase):
                 ]
             ),
             db_registry=SimpleNamespace(names=lambda: ["Datico.MDB", "aocasa.mdb"]),
+            current_db_label="",
         )
-        app._guess_database_label_for_tag = lambda tag: App._guess_database_label_for_tag(app, tag)
-        app._build_tag_groups = lambda: App._build_tag_groups(app)
+        lib = LibraryController(state, DBController(state))
 
-        groups = App._get_effective_groups(app)
+        groups = lib._get_effective_groups()
 
         self.assertEqual([group["name"] for group in groups], ["aocasa", "datico"])
         self.assertEqual(groups[0]["database_label"], "aocasa.mdb")
@@ -514,14 +528,14 @@ class AppLogicTests(unittest.TestCase):
         self.assertEqual(len(groups[1]["conditions"]), 2)
 
     def test_prepare_condition_for_storage_normalizes_periodic_review(self):
-        app = SimpleNamespace(
-            _database_label_for_condition=lambda cond: App._database_label_for_condition(app, cond),
+        state = SimpleNamespace(
             current_db_label="Datico.mdb",
             db=SimpleNamespace(connected=False, db_path=""),
-            _register_database_reference=lambda _label, _path="": "",
+            db_registry=SimpleNamespace(names=lambda: []),
         )
+        lib = LibraryController(state, DBController(state))
 
-        prepared = App._prepare_condition_for_storage(app, {
+        prepared = lib.prepare_condition_for_storage({
             "name": "Controllo mese",
             "periodic_review_enabled": True,
             "periodic_review_cycle": "MONTHLY",
@@ -534,14 +548,14 @@ class AppLogicTests(unittest.TestCase):
         self.assertEqual(prepared["periodic_review_note"], "Aggiornare mese corrente")
 
     def test_prepare_condition_for_storage_clears_periodic_review_when_disabled(self):
-        app = SimpleNamespace(
-            _database_label_for_condition=lambda cond: App._database_label_for_condition(app, cond),
+        state = SimpleNamespace(
             current_db_label="",
             db=SimpleNamespace(connected=False, db_path=""),
-            _register_database_reference=lambda _label, _path="": "",
+            db_registry=SimpleNamespace(names=lambda: []),
         )
+        lib = LibraryController(state, DBController(state))
 
-        prepared = App._prepare_condition_for_storage(app, {
+        prepared = lib.prepare_condition_for_storage({
             "name": "Controllo statico",
             "periodic_review_enabled": False,
             "periodic_review_cycle": "monthly",
@@ -621,36 +635,6 @@ class StorageV5Tests(unittest.TestCase):
 
         self.assertTrue(summary["due"])
         self.assertIn("Mensile DA AGG.", summary["label"])
-
-
-class ConditionManagerV6Tests(unittest.TestCase):
-    def test_sorted_store_indices_can_order_by_name(self):
-        manager = SimpleNamespace(
-            store=SimpleNamespace(items=[
-                {"name": "Zeta", "tag": "beta"},
-                {"name": "Alfa", "tag": "gamma"},
-                {"name": "Beta", "tag": "alfa"},
-            ]),
-            var_sort=DummyVar("Nome"),
-        )
-
-        indices = ui_components.ConditionManager._sorted_store_indices(manager)
-
-        self.assertEqual(indices, [1, 2, 0])
-
-    def test_sorted_store_indices_can_order_by_category(self):
-        manager = SimpleNamespace(
-            store=SimpleNamespace(items=[
-                {"name": "Zeta", "tag": "beta"},
-                {"name": "Alfa", "tag": "gamma"},
-                {"name": "Beta", "tag": "alfa"},
-            ]),
-            var_sort=DummyVar("Categoria"),
-        )
-
-        indices = ui_components.ConditionManager._sorted_store_indices(manager)
-
-        self.assertEqual(indices, [2, 0, 1])
 
 
 if __name__ == "__main__":

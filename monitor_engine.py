@@ -115,8 +115,5 @@ class MonitorEngine:
             })
             logger.info(f"Ciclo completato. {len(cycle_errors)} anomalie trovate. Prossimo avvio: {next_run}")
             
-            # Attesa attiva ma interrompibile
-            for _ in range(self.interval_sec):
-                if self._stop_event.is_set():
-                    break
-                time.sleep(1)
+            # Attesa interrompibile: ritorna subito quando viene richiesto lo stop
+            self._stop_event.wait(timeout=self.interval_sec)

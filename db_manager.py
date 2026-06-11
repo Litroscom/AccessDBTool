@@ -13,13 +13,23 @@ class DatabaseManager:
         self.table_columns = {}
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _qi(name):
+        """Quote a SQL identifier safely for Access (escape closing bracket)."""
+        return "[" + str(name).replace("]", "]]") + "]"
+
     @property
     def connected(self):
+        # Proprietà economica e senza side-effect: nessun I/O nel getter.
+        return self.conn is not None
+
+    def ping(self):
+        """Verifica attiva che la connessione ODBC sia ancora funzionante.
+        Esegue un SELECT 1 sotto lock; in caso di errore resetta la connessione."""
         if self.conn is None:
             return False
         with self._lock:
             try:
-                # Verifica che la connessione ODBC sia ancora funzionante
                 self.conn.cursor().execute("SELECT 1")
                 return True
             except Exception:
@@ -97,7 +107,7 @@ class DatabaseManager:
         cols = []
         try:
             cur_t = self.conn.cursor()
-            cur_t.execute("SELECT TOP 1 * FROM [" + table + "]")
+            cur_t.execute("SELECT TOP 1 * FROM " + self._qi(table))
             if cur_t.description:
                 for d in cur_t.description:
                     type_str = d[1].__name__ if hasattr(d[1], '__name__') else str(d[1])
@@ -155,7 +165,7 @@ class DatabaseManager:
 
     def row_count(self, table):
         try:
-            _, rows = self.fetch(f"SELECT COUNT(*) FROM [{table}]")
+            _, rows = self.fetch(f"SELECT COUNT(*) FROM {self._qi(table)}")
             return rows[0][0] if rows else 0
         except Exception:
             return -1
@@ -175,6 +185,7 @@ class DatabaseManager:
                 col_meta = c
                 break
         if col_meta is None:
+            logger.debug(f"cast_value: metadati mancanti per {table}.{col_name}, valore ritornato senza conversione.")
             return value  # Nessun metadato, ritorna così com'è
 
         type_str = col_meta["type"].lower()
@@ -215,12 +226,38 @@ class DatabaseManager:
         vals = []
         for k, v in data_dict.items():
             if k == pk_col: continue
-            cols.append(f"[{k}] = ?")
+            cols.append(f"{self._qi(k)} = ?")
             vals.append(v)
-        
+
         if not cols: return 0
-        
-        sql = f"UPDATE [{table}] SET {', '.join(cols)} WHERE [{pk_col}] = ?"
+
+        sql = f"UPDATE {self._qi(table)} SET {', '.join(cols)} WHERE {self._qi(pk_col)} = ?"
         vals.append(pk_val)
-        
+
         return self.execute(sql, vals)
+
+    def bulk_update(self, table, set_col, pk_col, pairs):
+        """pairs = list of (typed_value, typed_pk). Single transaction, one commit.
+        Returns number of rows updated. Rolls back on any error and re-raises."""
+        if not pairs:
+            return 0
+        sql = f"UPDATE {self._qi(table)} SET {self._qi(set_col)} = ? WHERE {self._qi(pk_col)} = ?"
+        with self._lock:
+            if self.conn is None:
+                raise ConnectionError("Nessuna connessione al database attiva. Aprire un database prima di eseguire query.")
+            try:
+                cur = self.conn.cursor()
+                updated = 0
+                for typed_value, typed_pk in pairs:
+                    cur.execute(sql, (typed_value, typed_pk))
+                    # rowcount può essere -1 con alcuni driver: in tal caso conta comunque la riga
+                    updated += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 1
+                self.conn.commit()
+                return updated
+            except Exception as e:
+                try:
+                    self.conn.rollback()
+                except Exception as rb_err:
+                    logger.warning(f"Errore durante il rollback di bulk_update: {rb_err}")
+                logger.error(f"Errore durante bulk_update su [{table}]: {e}")
+                raise

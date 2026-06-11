@@ -1,16 +1,26 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import csv
 import logging
 
 logger = logging.getLogger("AccessDBTool.ResultsView")
 
 
 class ResultsView(ttk.Frame):
-    def __init__(self, parent, app):
+    def __init__(self, parent, state, result_controller):
         super().__init__(parent)
-        self.app = app
+        self.state = state
+        self.result_ctrl = result_controller
         self._current_title = ""
+        self._on_context_menu = None
+        self._on_open_in_builder = None
         self._build_ui()
+
+    def set_context_menu_callback(self, callback):
+        self._on_context_menu = callback
+
+    def set_open_in_builder_callback(self, callback):
+        self._on_open_in_builder = callback
 
     def _build_ui(self):
         self._build_action_bar()
@@ -44,7 +54,7 @@ class ResultsView(ttk.Frame):
         self.res_tree.tag_configure("error", foreground="#ffb3b3")
         self.res_tree.tag_configure("ok", foreground="#b3ffcc")
 
-        self.res_tree.bind("<Button-3>", self._on_context_menu)
+        self.res_tree.bind("<Button-3>", self._on_right_click)
 
     def _build_action_bar(self):
         action_frame = ttk.Frame(self, padding=4)
@@ -70,14 +80,81 @@ class ResultsView(ttk.Frame):
                    command=self._open_in_builder,
                    bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
 
-    def _on_context_menu(self, event):
-        self.app._show_res_menu(event)
+    def _on_right_click(self, event):
+        iid = self.res_tree.identify_row(event.y)
+        if iid and iid not in self.res_tree.selection():
+            self.res_tree.selection_add(iid)
+            self.res_tree.focus(iid)
+        if self._on_context_menu:
+            self._on_context_menu(event)
+        else:
+            self._show_res_menu(event)
+
+    def _selected_rows(self):
+        return [self.res_tree.item(iid, "values") for iid in self.res_tree.selection()]
+
+    def _selected_indices(self):
+        out = []
+        for iid in self.res_tree.selection():
+            try:
+                out.append(int(iid))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _column_from_event(self, event):
+        res = self.state.current_result
+        if not res:
+            return ""
+        col_id = self.res_tree.identify_column(event.x)
+        if not col_id or col_id == "#0":
+            return ""
+        try:
+            idx = int(str(col_id).lstrip("#")) - 1
+        except ValueError:
+            return ""
+        cols = res.get("columns", [])
+        return cols[idx] if 0 <= idx < len(cols) else ""
+
+    def _show_res_menu(self, event):
+        res = self.state.current_result
+        if not res:
+            return
+        builder = self.state.active_builder
+        m = tk.Menu(self, tearoff=0)
+        edit_state = tk.NORMAL if self.result_ctrl.result_supports_direct_update() else tk.DISABLED
+        m.add_command(label="Modifica record...", command=self._edit_record, state=edit_state)
+        m.add_separator()
+        m.add_command(label="Sostituzione Massiva...", command=self._bulk_replace, state=edit_state)
+        if builder and hasattr(builder, "add_exceptions"):
+            ctype = self.result_ctrl._current_result_condition_type()
+            if ctype != "concat_similarity":
+                m.add_separator()
+                if ctype == "similarity_check":
+                    sim = tk.Menu(m, tearoff=0)
+                    sim.add_command(label="Escludi coppia per sempre (valori)",
+                                    command=lambda: self._add_similarity("pair_values"))
+                    sim.add_command(label="Escludi coppia specifica di record",
+                                    command=lambda: self._add_similarity("pair_records"))
+                    sim.add_separator()
+                    sim.add_command(label="Escludi record sinistri selezionati",
+                                    command=lambda: self._add_similarity("left_records"))
+                    sim.add_command(label="Escludi record destri selezionati",
+                                    command=lambda: self._add_similarity("right_records"))
+                    m.add_cascade(label="Esclusioni Somiglianze", menu=sim)
+                else:
+                    clicked = self._column_from_event(event)
+                    target = self.result_ctrl.resolve_non_fuzzy_exception_target(clicked)
+                    label = f"Aggiungi '{target}' selezionati a Esclusioni" if target else "Aggiungi Selezionati a Esclusioni"
+                    m.add_command(label=label, command=lambda col=target: self._add_nonfuzzy(col))
+        m.post(event.x_root, event.y_root)
 
     def _apply_filter(self, _evt=None):
         query = self.var_filter.get().lower()
-        if not self.app.current_result:
+        res = self.state.current_result
+        if not res:
             return
-        rows = self.app.current_result.get("rows", [])
+        rows = res.get("rows", [])
         self.res_tree.delete(*self.res_tree.get_children())
         count = 0
         for i, r in enumerate(rows):
@@ -92,7 +169,7 @@ class ResultsView(ttk.Frame):
                         break
 
         self.res_lbl.config(
-            text=f"{self.app.current_result.get('title', '?')} ({count} filtrati su {len(rows)})"
+            text=f"{res.get('title', '?')} ({count} filtrati su {len(rows)})"
         )
 
     def show_results(self, res):
@@ -113,30 +190,109 @@ class ResultsView(ttk.Frame):
         self._current_title = res.get("title", "")
 
     def _export_csv(self):
-        if not self.app.current_result:
-            return
-        p = filedialog.asksaveasfilename(defaultextension=".csv")
-        if not p:
-            return
-        import csv
-        with open(p, "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f, delimiter=";")
-            w.writerow(self.app.current_result["columns"])
-            w.writerows(self.app.current_result["rows"])
-        messagebox.showinfo("OK", "Esportato")
+        self.result_ctrl.export_csv()
 
     def _edit_record(self):
-        self.app._edit_res_record()
+        if not self.result_ctrl.result_supports_direct_update():
+            return messagebox.showwarning(
+                "Operazione non disponibile",
+                "La modifica diretta è disponibile solo per risultati mappabili a una singola tabella.",
+            )
+        res = self.state.current_result
+        sel = self._selected_indices()
+        if not sel:
+            return messagebox.showwarning("Attenzione", "Seleziona una riga.")
+        rows = res.get("rows", [])
+        cols = res.get("columns", [])
+        if sel[0] >= len(rows):
+            return
+        table = res.get("source_table")
+        if not table:
+            return messagebox.showerror("Errore", "Tabella sorgente non identificata.")
+        data = dict(zip(cols, rows[sel[0]]))
+        from ui_components import RecordEditorDialog
+        dlg = RecordEditorDialog(self.winfo_toplevel(), self.state.db, table, data)
+        self.wait_window(dlg)
+        self.state.status.set("Record modificato. Riesegui il controllo per aggiornare la vista.")
 
     def _bulk_replace(self):
-        self.app._bulk_replace_results()
+        if not self.result_ctrl.result_supports_direct_update():
+            return messagebox.showwarning(
+                "Operazione non disponibile",
+                "La sostituzione massiva è disponibile solo per risultati che mappano in modo univoco a una singola tabella.",
+            )
+        res = self.state.current_result
+        rows = res.get("rows", []) if res else []
+        if not rows:
+            return messagebox.showwarning("!", "Nessun record presente nei risultati.")
+        import ui_components
+        dlg = ui_components.BulkReplaceDialog(self.winfo_toplevel(), res.get("columns", []), len(rows))
+        self.wait_window(dlg)
+        if not dlg.result:
+            return
+        visible = []
+        for iid in self.res_tree.get_children():
+            try:
+                visible.append(int(iid))
+            except (TypeError, ValueError):
+                continue
+        updated = self.result_ctrl.apply_bulk_replace(dlg.result, visible)
+        if updated == -1:
+            return messagebox.showwarning(
+                "Operazione annullata",
+                "Impossibile identificare con certezza la colonna chiave (PK) del risultato.\n"
+                "La sostituzione massiva è stata annullata per evitare modifiche su righe errate.",
+            )
+        messagebox.showinfo("Successo", f"Aggiornamento completato.\n{updated} record modificati su {len(visible)} filtrati.")
+        self.state.status.set(f"Ultima operazione: Sostituzione massiva ({updated} record).")
+        self._apply_filter()
+
+    def _add_similarity(self, mode):
+        builder = self.state.active_builder
+        res = self.state.current_result
+        if not builder or not res:
+            return
+        cnt = self.result_ctrl.add_similarity_exceptions(
+            mode, res.get("columns", []), self._selected_rows(),
+            builder.get_exception_column() if hasattr(builder, "get_exception_column") else "",
+            builder,
+        )
+        self._notify_exclusions(cnt)
+
+    def _add_nonfuzzy(self, target_column=""):
+        builder = self.state.active_builder
+        res = self.state.current_result
+        if not builder or not res:
+            return
+        cnt = self.result_ctrl.add_exceptions_from_rows(
+            res.get("columns", []), self._selected_rows(), builder, target_column,
+        )
+        self._notify_exclusions(cnt)
+
+    def _notify_exclusions(self, cnt):
+        if cnt > 0:
+            messagebox.showinfo("OK", f"Aggiunte {cnt} esclusioni al costruttore.")
+        else:
+            messagebox.showinfo("Info", "Tutti i valori erano già presenti o nessun valore valido.")
 
     def _add_to_exclusions(self):
-        self.app._ensure_active_builder_from_result()
-        self.app._add_selected_to_exceptions(target_column="")
+        res = self.state.current_result
+        if not res:
+            return
+        builder = self.state.active_builder
+        if not builder or not hasattr(builder, "add_exceptions"):
+            return messagebox.showwarning(
+                "!", "Carica/crea una condizione nel builder per aggiungere esclusioni.",
+            )
+        if self.result_ctrl._current_result_condition_type() == "similarity_check":
+            return messagebox.showinfo(
+                "Esclusioni",
+                "Per i controlli di similarità usa il tasto destro sui risultati per scegliere la modalità di esclusione.",
+            )
+        self._add_nonfuzzy("")
 
     def _open_in_builder(self):
-        if self.app.current_result:
-            cond = self.app.current_result.get("_condition")
-            if cond:
-                self.app._load_cond_into_builder(cond)
+        if self.state.current_result:
+            cond = self.state.current_result.get("_condition")
+            if cond and self._on_open_in_builder:
+                self._on_open_in_builder(cond)
