@@ -7,9 +7,13 @@ logger = logging.getLogger("AccessDBTool.DashboardView")
 
 
 class DashboardView(ttk.Frame):
-    def __init__(self, parent, app):
+    def __init__(self, parent, state, db_controller, library_controller=None, batch_controller=None, result_controller=None):
         super().__init__(parent)
-        self.app = app
+        self.state = state
+        self.db_ctrl = db_controller
+        self.library_ctrl = library_controller
+        self.batch_ctrl = batch_controller
+        self.result_ctrl = result_controller
         self._build_ui()
 
     def _build_ui(self):
@@ -87,7 +91,7 @@ class DashboardView(ttk.Frame):
         self.dash_tree.bind("<Double-1>", self._on_double_click)
 
         from views.results_view import ResultsView
-        self.results_view = ResultsView(paned, self.app)
+        self.results_view = ResultsView(paned, self.state, self.result_ctrl)
         paned.add(self.results_view, weight=2)
 
         bottom_frame = ttk.Frame(self, padding=4)
@@ -106,17 +110,30 @@ class DashboardView(ttk.Frame):
         )
         self.log_text.pack(fill=tk.X, pady=(4, 0))
 
+        if self.batch_ctrl:
+            # Marshalling sul main thread: le callback partono da thread worker.
+            self.batch_ctrl.set_log_callback(
+                lambda line: self.after(0, self._append_log, line))
+            self.batch_ctrl.set_progress_callback(
+                lambda cur, tot: self.after(0, self._update_progress, cur, tot))
+            self.batch_ctrl.set_dash_update_callback(
+                lambda: self.after(0, self._refresh))
+
+        if self.result_ctrl:
+            self.result_ctrl.set_results_callback(
+                lambda res: self.after(0, self.show_results, res))
+
     def _refresh(self):
         self.dash_tree.delete(*self.dash_tree.get_children())
         tag_filter = self.var_tag_filter.get().strip()
-        items = self.app._get_dashboard_items(tag_filter)
+        items = self.library_ctrl.get_dashboard_items(tag_filter) if self.library_ctrl else []
         search = self.var_search.get().strip().lower()
         if search:
             items = [c for c in items if search in c.get("name", "").lower()]
         anomalies_only = self.var_anomalies_only.get()
-        self.app._dash_items = items
+        self.state.dash_items = items
         for i, c in enumerate(items):
-            state_data = self.app._dashboard_state_for_condition(c)
+            state_data = self.batch_ctrl.dashboard_state_for_condition(c) if self.batch_ctrl else {}
             tag = state_data.get("tag", "idle")
             count_val = state_data.get("count", "-")
             status_val = state_data.get("status", "Mai eseguito")
@@ -128,7 +145,7 @@ class DashboardView(ttk.Frame):
                                            count_val, status_val),
                                    tags=(tag,))
 
-        all_tags = self.app._all_condition_tags()
+        all_tags = self.library_ctrl.all_condition_tags() if self.library_ctrl else []
         self.cmb_tag["values"] = ["Tutti"] + all_tags
         db_labels = sorted(set(
             c.get("database_label", "") for c in items if c.get("database_label")
@@ -141,12 +158,12 @@ class DashboardView(ttk.Frame):
             return
         try:
             idx = int(sel[0])
-            if 0 <= idx < len(self.app._dash_items):
-                cond = self.app._dash_items[idx]
-                state_data = self.app._dashboard_state_for_condition(cond)
+            if 0 <= idx < len(self.state.dash_items):
+                cond = self.state.dash_items[idx]
+                state_data = self.batch_ctrl.dashboard_state_for_condition(cond) if self.batch_ctrl else {}
                 result = state_data.get("result")
                 if result:
-                    self.app.current_result = result
+                    self.state.current_result = result
                     self.results_view.show_results(result)
         except Exception:
             pass
@@ -157,17 +174,41 @@ class DashboardView(ttk.Frame):
             return
         try:
             idx = int(sel[0])
-            if 0 <= idx < len(self.app._dash_items):
-                cond = self.app._dash_items[idx]
-                self.app._start_dashboard_execution(idx, cond)
+            if 0 <= idx < len(self.state.dash_items):
+                cond = self.state.dash_items[idx]
+                if self.batch_ctrl:
+                    self.batch_ctrl.run_selected_dashboard_check(cond)
         except Exception:
             pass
 
     def _run_selected(self):
-        self.app._run_selected_dashboard_check()
+        sel = self.dash_tree.selection()
+        if not sel:
+            return
+        try:
+            idx = int(sel[0])
+            if 0 <= idx < len(self.state.dash_items):
+                cond = self.state.dash_items[idx]
+                if self.batch_ctrl:
+                    self.batch_ctrl.run_selected_dashboard_check(cond)
+        except Exception:
+            pass
 
     def _run_all(self):
-        self.app._run_all_batch()
+        if self.batch_ctrl:
+            self.batch_ctrl.run_all_batch()
+
+    def _append_log(self, line):
+        self.log_text.configure(state=tk.NORMAL)
+        self.log_text.insert(tk.END, line + "\n")
+        self.log_text.see(tk.END)
+        self.log_text.configure(state=tk.DISABLED)
+
+    def _update_progress(self, current, total):
+        if total > 0:
+            self.progress["maximum"] = total
+            self.progress["value"] = current
+        self.lbl_progress.config(text=f"{current}/{total} controlli")
 
     def show_results(self, res):
         self.results_view.show_results(res)

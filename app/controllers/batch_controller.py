@@ -29,12 +29,24 @@ class BatchController:
     def set_dash_update_callback(self, callback):
         self._on_dash_update = callback
 
+    def _safe(self, callback, *args):
+        """Invoca un callback UI senza mai propagare eccezioni nel thread worker.
+
+        Le callback aggiornano Tkinter da thread di lavoro: un loro errore
+        (es. update cross-thread) NON deve interrompere l'esecuzione dei
+        controlli rimanenti del batch."""
+        if not callback:
+            return
+        try:
+            callback(*args)
+        except Exception as e:
+            logger.warning("Callback UI batch ignorata per errore: %s", e)
+
     def _log(self, message):
         ts = datetime.now().strftime("%H:%M:%S")
         log_line = f"[{ts}] {message}"
         logger.info(log_line)
-        if self._on_log:
-            self._on_log(log_line)
+        self._safe(self._on_log, log_line)
 
     def _stored_database_label_for_condition(self, cond):
         return str(cond.get("database_label", "") or "").strip()
@@ -101,8 +113,12 @@ class BatchController:
             label = self._stored_database_label_for_condition(cond)
             grouped.setdefault(label, []).append((idx, dict(cond)))
 
-        total = len(batch_items)
-        completed = 0
+        # Progresso contato per CONDIZIONE (non per gruppo-database): con un solo
+        # database tutte le condizioni stanno in un gruppo, quindi contare i
+        # future darebbe sempre 1/totale. Contatore condiviso protetto da lock.
+        self._batch_total = len(batch_items)
+        self._batch_done = 0
+        self._batch_progress_lock = threading.Lock()
         max_workers = max(1, min(4, len(grouped)))
         errors = []
 
@@ -116,9 +132,6 @@ class BatchController:
                     future.result()
                 except Exception as e:
                     errors.append(str(e))
-                completed += 1
-                if self._on_progress:
-                    self._on_progress(completed, total)
 
         self.state.batch_running = False
         if errors:
@@ -155,8 +168,11 @@ class BatchController:
                     state = {"count": "ERR", "status": "Errore", "tag": "error", "result": None}
                     self.state.set_dash_state(self.condition_cache_key(cond), state)
                     self._log(f"{name} -> ERRORE: {e}")
-                if self._on_dash_update:
-                    self._on_dash_update()
+                with self._batch_progress_lock:
+                    self._batch_done += 1
+                    done = self._batch_done
+                self._safe(self._on_progress, done, self._batch_total)
+                self._safe(self._on_dash_update)
         finally:
             db.disconnect()
 
@@ -184,15 +200,13 @@ class BatchController:
             tag = "error" if count > 0 else "ok"
             self.set_dashboard_state(cond, count, "Completato", tag, result=res)
             self._log(f"{name} -> {count} anomalie")
-            if self._on_results_callback:
-                self._on_results_callback(res)
+            self._safe(self._on_results_callback, res)
         except Exception as e:
             logger.error(f"Errore esecuzione '{name}': {e}")
             self.set_dashboard_state(cond, "ERR", "Errore", "error")
             self._log(f"{name} -> ERRORE: {e}")
         finally:
-            if self._on_dash_update:
-                self._on_dash_update()
+            self._safe(self._on_dash_update)
 
     @property
     def _on_results_callback(self):

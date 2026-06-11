@@ -272,11 +272,18 @@ class App(tk.Tk):
             view.batch_ctrl = self.batch_ctrl
             view.result_ctrl = self.result_ctrl
             if self.batch_ctrl:
-                self.batch_ctrl.set_log_callback(view._append_log)
-                self.batch_ctrl.set_progress_callback(view._update_progress)
-                self.batch_ctrl.set_dash_update_callback(view._refresh)
+                # Le callback arrivano da thread worker del batch: marshalling
+                # sul main thread via after(), altrimenti Tkinter cross-thread
+                # solleva eccezioni e interrompe l'aggiornamento.
+                self.batch_ctrl.set_log_callback(
+                    lambda line, v=view: v.after(0, v._append_log, line))
+                self.batch_ctrl.set_progress_callback(
+                    lambda cur, tot, v=view: v.after(0, v._update_progress, cur, tot))
+                self.batch_ctrl.set_dash_update_callback(
+                    lambda v=view: v.after(0, v._refresh))
             if self.result_ctrl:
-                self.result_ctrl.set_results_callback(view.show_results)
+                self.result_ctrl.set_results_callback(
+                    lambda res, v=view: v.after(0, v.show_results, res))
             if hasattr(view, "results_view"):
                 view.results_view.result_ctrl = self.result_ctrl
                 view.results_view.set_open_in_builder_callback(

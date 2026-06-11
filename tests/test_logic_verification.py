@@ -434,6 +434,48 @@ class AppLogicTests(unittest.TestCase):
         self.assertEqual(DatabaseManager._qi("a]b"), "[a]]b]")
         self.assertEqual(engines._qi("a]b"), "[a]]b]")
 
+    def test_batch_runs_all_conditions_despite_failing_ui_callback(self):
+        # Regressione "Esegui Tutti esegue solo alcuni": una callback UI che
+        # solleva (es. Tkinter cross-thread) NON deve abortire il loop del batch.
+        import threading as _threading
+        import app.controllers.batch_controller as bc
+        from app.state import AppState
+
+        state = AppState()
+        state.batch_running = True
+        state.status = DummyStatus()
+        items = [(i, {"name": f"C{i}", "type": "x", "database_label": "DB"}) for i in range(5)]
+
+        class FakeDM:
+            def connect(self, _p): pass
+            def disconnect(self): pass
+
+        class FakeExec:
+            def __init__(self, _db): pass
+            def run(self, _cond): return {"count": 0}
+
+        calls = {"n": 0}
+
+        def boom():
+            calls["n"] += 1
+            raise RuntimeError("Tk cross-thread")
+
+        ctrl = bc.BatchController(
+            state, db_controller=None,
+            result_controller=SimpleNamespace(_on_results_callback=None),
+        )
+        ctrl._batch_total = len(items)
+        ctrl._batch_done = 0
+        ctrl._batch_progress_lock = _threading.Lock()
+        ctrl.set_dash_update_callback(boom)
+
+        with patch.object(bc, "DatabaseManager", FakeDM), patch.object(bc, "ConditionExecutor", FakeExec):
+            ctrl._run_batch_for_database("DB", "fake.mdb", items)
+
+        # Tutte e 5 le condizioni eseguite e registrate, callback fallita ogni volta.
+        self.assertEqual(len(state.dash_state_by_key), 5)
+        self.assertEqual(calls["n"], 5)
+
     def test_similarity_exclusion_modes_are_split_correctly(self):
         builder = DummyBuilder()
         ctrl = ResultController(SimpleNamespace(current_result=None, active_ctype="similarity_check"))
