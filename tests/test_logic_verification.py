@@ -236,6 +236,33 @@ class ConditionExecutorSmokeTests(unittest.TestCase):
         })
         self.assertEqual(result["count"], 1)
 
+    def test_similarity_single_id_exceptions_exclude_by_key(self):
+        """Eccezioni singole numeriche o 'ID:xxx' escludono il record con quell'ID."""
+        db = FakeDB()
+        db.queue_fetch(["ID", "Name"], [[1, "Mario"], [2, "Marioo"], [3, "Luca"]])
+        result = ConditionExecutor(db).run({
+            "type": "similarity_check",
+            "table": "People",
+            "column": "Name",
+            "key_column": "ID",
+            "threshold": 80,
+            "exceptions": ["2"],
+        })
+        self.assertEqual(result["count"], 0)
+
+    def test_similarity_single_id_exception_with_prefix(self):
+        db = FakeDB()
+        db.queue_fetch(["ID", "Name"], [[1, "Mario"], [2, "Marioo"], [3, "Luca"]])
+        result = ConditionExecutor(db).run({
+            "type": "similarity_check",
+            "table": "People",
+            "column": "Name",
+            "key_column": "ID",
+            "threshold": 80,
+            "exceptions": ["ID:2"],
+        })
+        self.assertEqual(result["count"], 0)
+
     def test_value_comparison_regex_keeps_hidden_filter_columns(self):
         db = FakeDB()
         db.queue_fetch(["Name", "Code"], [["Alice", "A12"], ["Bob", "B12"]])

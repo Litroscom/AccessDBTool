@@ -47,7 +47,7 @@
 - [ ] **Step 1: Crea il branch**
 
 ```bash
-cd "/mnt/c/Users/CO/Desktop/Progetti Antigravity/AccessDBTool/AccessDBTool_v6.0"
+cd "/mnt/c/Users/CO/Desktop/Progetti Antigravity/AccessDBTool/AccessDBTool_v7.2"
 git checkout -b feature/v7-ui
 ```
 
@@ -1064,7 +1064,7 @@ Sostituito da ttkbootstrap.
 - [ ] **Step 4: Verifica integrazione**
 
 ```bash
-cd "/mnt/c/Users/CO/Desktop/Progetti Antigravity/AccessDBTool/AccessDBTool_v6.0"
+cd "/mnt/c/Users/CO/Desktop/Progetti Antigravity/AccessDBTool/AccessDBTool_v7.2"
 python3 -c "
 import sys, os
 sys.path.insert(0, '.')

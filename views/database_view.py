@@ -9,11 +9,20 @@ logger = logging.getLogger("AccessDBTool.DatabaseView")
 
 
 class DatabaseView(ttk.Frame):
-    def __init__(self, parent, app):
+    def __init__(self, parent, state, db_controller):
         super().__init__(parent)
-        self.app = app
+        self.state = state
+        self.db_ctrl = db_controller
         self.current_insights = []
+        self._on_load_insight = None
+        self._on_profiler_done = None
         self._build_ui()
+
+    def set_load_insight_callback(self, callback):
+        self._on_load_insight = callback
+
+    def set_profiler_done_callback(self, callback):
+        self._on_profiler_done = callback
 
     def _build_ui(self):
         left = ttk.Frame(self)
@@ -34,9 +43,9 @@ class DatabaseView(ttk.Frame):
 
         btn_frame = ttk.Frame(db_frame)
         btn_frame.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(btn_frame, text="Apri Database...", command=self.app._open_db,
+        ttk.Button(btn_frame, text="Apri Database...", command=self._open_db,
                    bootstyle="primary").pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="Chiudi", command=self.app._close_db,
+        ttk.Button(btn_frame, text="Chiudi", command=self._close_db,
                    bootstyle="secondary").pack(side=tk.LEFT, padx=2)
 
         insight_frame = ttk.LabelFrame(left, text="Insight Automatici", padding=8)
@@ -53,10 +62,10 @@ class DatabaseView(ttk.Frame):
         self.ins_tree.column("desc", width=400)
         self.ins_tree.column("action", width=120)
         self.ins_tree.pack(fill=tk.BOTH, expand=True)
-        self.ins_tree.bind("<Double-1>", self.app._load_insight)
+        self.ins_tree.bind("<Double-1>", self._load_insight)
 
         ttk.Button(insight_frame, text="Genera Insight",
-                   command=self.app._run_profiler,
+                   command=self._run_profiler,
                    bootstyle="info-outline").pack(anchor=tk.W, pady=(4, 0))
 
         reg_frame = ttk.LabelFrame(right, text="Database Collegati", padding=8)
@@ -77,23 +86,42 @@ class DatabaseView(ttk.Frame):
         tab_frame = ttk.LabelFrame(right, text="Tabelle", padding=8)
         tab_frame.pack(fill=tk.BOTH, expand=True)
 
-        scroll = ttk.Scrollbar(tab_frame)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.lst_tables = tk.Listbox(
-            tab_frame, yscrollcommand=scroll.set,
-            font=("Consolas", 10), selectmode=tk.MULTIPLE
+        self.tables_tree = ttk.Treeview(
+            tab_frame, columns=("name",), show="headings", selectmode="extended"
         )
-        self.lst_tables.pack(fill=tk.BOTH, expand=True)
-        scroll.config(command=self.lst_tables.yview)
-        self.lst_tables.bind("<<ListboxSelect>>", self.app._on_table_sel)
+        self.tables_tree.heading("name", text="Nome Tabella")
+        self.tables_tree.column("name", width=200)
+        vsb = ttk.Scrollbar(tab_frame, orient=tk.VERTICAL, command=self.tables_tree.yview)
+        self.tables_tree.configure(yscrollcommand=vsb.set)
+        self.tables_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tables_tree.bind("<<TreeviewSelect>>", self._on_table_sel)
+
+    def _open_db(self):
+        self.db_ctrl.open_db()
+        self.refresh()
+
+    def _close_db(self):
+        self.db_ctrl.close_db()
+        self.refresh()
+
+    def _run_profiler(self):
+        self.db_ctrl.run_profiler()
+        self.refresh_insights()
+        if self._on_profiler_done:
+            self._on_profiler_done()
+
+    def _load_insight(self, event=None):
+        if self._on_load_insight:
+            self._on_load_insight(event)
 
     def refresh(self):
-        if self.app.db.connected:
-            label = self.app.current_db_label or "DB connesso"
+        if self.state.db.connected:
+            label = self.state.current_db_label or "DB connesso"
             self.lbl_db_name.config(text=label)
-            self.lbl_db_path.config(text=str(self.app.db.db_path))
+            self.lbl_db_path.config(text=str(self.state.db.db_path))
             self.lbl_db_tables.config(
-                text=f"{len(self.app.db.tables)} tabelle trovate"
+                text=f"{len(self.state.db.tables)} tabelle trovate"
             )
         else:
             self.lbl_db_name.config(text="Nessun DB")
@@ -101,15 +129,25 @@ class DatabaseView(ttk.Frame):
             self.lbl_db_tables.config(text="")
         self._refresh_registry()
         self._refresh_tables()
+        self.refresh_insights()
+
+    def refresh_insights(self):
+        self.ins_tree.delete(*self.ins_tree.get_children())
+        for ins in self.state.current_insights:
+            self.ins_tree.insert("", tk.END, values=(
+                ins.get("title", ""),
+                ins.get("desc", ""),
+                ins.get("action", ""),
+            ))
 
     def _refresh_registry(self):
         self.db_registry_tree.delete(*self.db_registry_tree.get_children())
-        current_path = str(getattr(self.app.db, "db_path", "") or "")
-        for entry in self.app.db_registry.entries():
+        current_path = str(getattr(self.state.db, "db_path", "") or "")
+        for entry in self.state.db_registry.entries():
             label = entry.get("label", "")
             path = entry.get("path", "")
             path_exists = bool(path and os.path.exists(path))
-            if self.app.db.connected and current_path and os.path.normcase(path) == os.path.normcase(current_path):
+            if self.state.db.connected and current_path and os.path.normcase(path) == os.path.normcase(current_path):
                 state = "APERTO"
             elif path_exists:
                 state = "PRONTO"
@@ -118,15 +156,21 @@ class DatabaseView(ttk.Frame):
             self.db_registry_tree.insert("", tk.END, iid=label, values=(label, state))
 
     def _refresh_tables(self):
-        self.lst_tables.delete(0, tk.END)
-        if self.app.db.connected:
-            for table in self.app.db.tables:
-                self.lst_tables.insert(tk.END, table)
+        self.tables_tree.delete(*self.tables_tree.get_children())
+        if self.state.db.connected:
+            for table in self.state.db.tables:
+                self.tables_tree.insert("", tk.END, values=(table,))
 
     def _on_registry_select(self, _evt=None):
         sel = self.db_registry_tree.selection()
         if not sel:
             return
         label = sel[0]
-        path = self.app.db_registry.get_path(label)
+        path = self.state.db_registry.get_path(label)
         self.lbl_registry_path.config(text=path or "Percorso non associato.")
+
+    def _on_table_sel(self, _evt=None):
+        self.state.sel_tables = [
+            self.tables_tree.item(iid, "values")[0]
+            for iid in self.tables_tree.selection()
+        ]

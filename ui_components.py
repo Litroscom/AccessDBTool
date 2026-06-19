@@ -200,12 +200,14 @@ class ColumnSelector(ttk.LabelFrame):
 
 
 class MultiConditionBuilder(ttk.LabelFrame):
-    def __init__(self, parent, db, on_table_change=None, title="Condizioni (AND/OR)"):
+    def __init__(self, parent, db, on_table_change=None, title="Condizioni (AND/OR)",
+                 show_conditions=True):
         super().__init__(parent, text=title, padding=5)
         self.db = db
         self.on_table_change = on_table_change
         self.condition_rows = []
         self.exclude_rows = []
+        self._show_conditions = show_conditions
         
         # --- Tabella Sorgente ---
         top_frm = ttk.Frame(self)
@@ -222,13 +224,19 @@ class MultiConditionBuilder(ttk.LabelFrame):
         self._rows_frame.pack(fill=tk.X, pady=4)
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill=tk.X)
-        ttk.Button(btn_frame, text="+ Aggiungi condizione", command=self._add_row).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text="- Rimuovi ultima", command=self._remove_last).pack(side=tk.LEFT, padx=4)
-
-        ttk.Separator(self, orient="horizontal").pack(fill=tk.X, pady=(8, 6))
+        if show_conditions:
+            ttk.Button(btn_frame, text="+ Aggiungi condizione", command=self._add_row).pack(side=tk.LEFT, padx=4)
+            ttk.Button(btn_frame, text="- Rimuovi ultima", command=self._remove_last).pack(side=tk.LEFT, padx=4)
+            ttk.Separator(self, orient="horizontal").pack(fill=tk.X, pady=(8, 6))
+            excl_title = "Esclusioni (opzionale)"
+        else:
+            # Modalità solo-esclusioni: nascondi la sezione conditions
+            self._rows_frame.pack_forget()
+            btn_frame.pack_forget()
+            excl_title = "Esclusioni"
         excl_hdr = ttk.Frame(self)
         excl_hdr.pack(fill=tk.X)
-        ttk.Label(excl_hdr, text="Esclusioni (opzionale)", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        ttk.Label(excl_hdr, text=excl_title, font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
         ttk.Label(
             excl_hdr,
             text="  Se un record soddisfa queste regole viene ignorato.",
@@ -442,7 +450,7 @@ class MultiConditionBuilder(ttk.LabelFrame):
         return cfg
 
     def set_config(self, c):
-        self.set_table(c.get("table") or (c.get("tables", [""])[0] if c.get("tables") else ""))
+        self.set_table(c.get("table") or c.get("source_table") or (c.get("tables", [""])[0] if c.get("tables") else ""))
         self.set_conditions(c.get("conditions", []))
         exclude_conditions = c.get("exclude_conditions")
         if exclude_conditions is None and c.get("exceptions"):
@@ -764,327 +772,6 @@ class GroupSelector(ttk.Frame):
             self.var.set("")
             self.refresh()
 
-
-class ConditionManager(tk.Toplevel):
-    def __init__(self, parent, store, refresh_callback, edit_callback=None):
-        super().__init__(parent)
-        self.title("Gestione Condizioni Salvate")
-        self.geometry("1420x760")
-        self.minsize(1320, 700)
-        self.store = store
-        self.refresh_callback = refresh_callback
-        self.edit_callback = edit_callback
-        self._view_indices = []
-        self.var_sort = tk.StringVar(value="Nome")
-        self.transient(parent)
-        self.grab_set()
-        main = ttk.Frame(self, padding=15)
-        main.pack(fill=tk.BOTH, expand=True)
-        top = ttk.Frame(main)
-        top.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(top, text="Libreria Condizioni", font=("Segoe UI", 12, "bold")).pack(side=tk.LEFT)
-        self.lbl_count = ttk.Label(top, text=f"({len(self.store.items)} salvate)", font=("Segoe UI", 9))
-        self.lbl_count.pack(side=tk.LEFT, padx=10)
-        ttk.Label(top, text="Ordina per:").pack(side=tk.RIGHT, padx=(10, 5))
-        self.cmb_sort = ttk.Combobox(top, textvariable=self.var_sort, state="readonly", width=16, values=["Nome", "Categoria"])
-        self.cmb_sort.pack(side=tk.RIGHT)
-        self.cmb_sort.bind("<<ComboboxSelected>>", lambda _evt: self._load_items())
-        body = ttk.Frame(main)
-        body.pack(fill=tk.BOTH, expand=True)
-        detail_panel = ttk.LabelFrame(body, text="Dettagli e Azioni", padding=10)
-        detail_panel.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(10, 0))
-        detail_panel.configure(width=430)
-        ttk.Label(detail_panel, text="Titolo:").pack(anchor=tk.W)
-        self.var_name = tk.StringVar()
-        self.ent_name = ttk.Entry(detail_panel, textvariable=self.var_name, width=40)
-        self.ent_name.pack(fill=tk.X, pady=(5, 10))
-        
-        ttk.Label(detail_panel, text="Macrosettore / Tipo Database:").pack(anchor=tk.W)
-        self.var_tag = tk.StringVar()
-        self.ent_tag = ttk.Entry(detail_panel, textvariable=self.var_tag, width=40)
-        self.ent_tag.pack(fill=tk.X, pady=(5, 10))
-
-        ttk.Label(detail_panel, text="Database collegato:").pack(anchor=tk.W)
-        self.var_db_label = tk.StringVar()
-        self.ent_db_label = ttk.Entry(detail_panel, textvariable=self.var_db_label, width=40)
-        self.ent_db_label.pack(fill=tk.X, pady=(5, 10))
-
-        ttk.Label(detail_panel, text="Descrizione:").pack(anchor=tk.W)
-        self.txt_desc = tk.Text(detail_panel, height=8, width=40, font=("Segoe UI", 9))
-        self.txt_desc.pack(fill=tk.BOTH, expand=True, pady=5)
-
-        reminder_box = ttk.LabelFrame(detail_panel, text="Promemoria Periodo", padding=8)
-        reminder_box.pack(fill=tk.X, pady=(5, 10))
-        self.var_periodic_review_enabled = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            reminder_box,
-            text="Richiede aggiornamento periodico dei filtri",
-            variable=self.var_periodic_review_enabled,
-            command=self._toggle_periodic_review_fields,
-        ).pack(anchor=tk.W)
-        cycle_row = ttk.Frame(reminder_box)
-        cycle_row.pack(fill=tk.X, pady=(6, 4))
-        ttk.Label(cycle_row, text="Frequenza:").pack(side=tk.LEFT)
-        self.var_periodic_review_cycle = tk.StringVar(value=PERIODIC_REVIEW_CYCLE_CHOICES[-1][0])
-        self.cmb_periodic_review_cycle = ttk.Combobox(
-            cycle_row,
-            textvariable=self.var_periodic_review_cycle,
-            state="readonly",
-            width=18,
-            values=[label for label, _key in PERIODIC_REVIEW_CYCLE_CHOICES],
-        )
-        self.cmb_periodic_review_cycle.pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Label(reminder_box, text="Nota:").pack(anchor=tk.W, pady=(6, 0))
-        self.var_periodic_review_note = tk.StringVar()
-        self.ent_periodic_review_note = ttk.Entry(reminder_box, textvariable=self.var_periodic_review_note)
-        self.ent_periodic_review_note.pack(fill=tk.X, pady=(4, 0))
-        self.lbl_periodic_review_last_ack = ttk.Label(reminder_box, text="Ultimo aggiornamento periodo: -", foreground="gray")
-        self.lbl_periodic_review_last_ack.pack(anchor=tk.W, pady=(6, 0))
-
-        btn_update = ttk.Button(detail_panel, text="AGGIORNA METADATI", command=self._update_current)
-        btn_update.pack(fill=tk.X, pady=10)
-        attach_alt_shortcut(btn_update, "a")
-        
-        if self.edit_callback:
-            ttk.Button(detail_panel, text="✏ MODIFICA NEL COSTRUTTORE", 
-                       style="Action.TButton", command=self._edit_in_builder).pack(fill=tk.X, pady=5)
-            
-        btn_delete = ttk.Button(detail_panel, text="ELIMINA SELEZIONATI", command=self._delete_selected)
-        btn_delete.pack(fill=tk.X, pady=20)
-        
-        ttk.Separator(detail_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
-        btn_bulk = ttk.Button(detail_panel, text="🔎 SOSTITUISCI IN BLOCCO...", command=self._open_bulk_replace)
-        btn_bulk.pack(fill=tk.X, pady=5)
-
-        btn_verify = ttk.Button(detail_panel, text="🛡 VERIFICA INTEGRITÀ", command=self._verify_integrity)
-        btn_verify.pack(fill=tk.X, pady=5)
-
-        ttk.Separator(detail_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
-        ttk.Button(detail_panel, text="📤 ESPORTA SELEZIONATE...",
-                   command=self._export_selected).pack(fill=tk.X, pady=5)
-        ttk.Button(detail_panel, text="📤 ESPORTA TUTTE...",
-                   command=self._export_all).pack(fill=tk.X, pady=5)
-        
-        attach_alt_shortcut(btn_delete, "e")
-        tree_frame = ttk.Frame(body)
-        tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.tree = ttk.Treeview(tree_frame, columns=["name", "tag", "db", "review", "type", "date"], show="headings")
-        self.tree.heading("name", text="Nome / Titolo", command=lambda: self._set_sort_mode("Nome"))
-        self.tree.heading("tag", text="Macrosettore", command=lambda: self._set_sort_mode("Categoria"))
-        self.tree.heading("db", text="Database")
-        self.tree.heading("review", text="Periodo")
-        self.tree.heading("type", text="Tipo")
-        self.tree.heading("date", text="Salvato il")
-        self.tree.column("name", width=270)
-        self.tree.column("tag", width=150)
-        self.tree.column("db", width=140)
-        self.tree.column("review", width=240)
-        self.tree.column("type", width=180)
-        self.tree.column("date", width=150)
-        vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        self.tree.grid(row=0, column=0, sticky="nsew"); vsb.grid(row=0, column=1, sticky="ns"); hsb.grid(row=1, column=0, sticky="ew")
-        tree_frame.grid_rowconfigure(0, weight=1); tree_frame.grid_columnconfigure(0, weight=1)
-        self.tree.bind("<<TreeviewSelect>>", self._on_select)
-        self._toggle_periodic_review_fields()
-        self._load_items()
-
-    def _set_sort_mode(self, mode):
-        self.var_sort.set(mode)
-        self._load_items()
-
-    def _sorted_store_indices(self):
-        indices = list(range(len(self.store.items)))
-        mode = self.var_sort.get().strip()
-        if mode == "Categoria":
-            key_fn = lambda idx: (
-                str(self.store.items[idx].get("tag", "") or "").strip().lower(),
-                str(self.store.items[idx].get("name", "") or "").strip().lower(),
-            )
-        else:
-            key_fn = lambda idx: (
-                str(self.store.items[idx].get("name", "") or "").strip().lower(),
-                str(self.store.items[idx].get("tag", "") or "").strip().lower(),
-            )
-        return sorted(indices, key=key_fn)
-
-    def _selected_store_indices(self):
-        selected = []
-        for iid in self.tree.selection():
-            try:
-                view_idx = int(iid)
-            except Exception:
-                continue
-            if 0 <= view_idx < len(self._view_indices):
-                selected.append(self._view_indices[view_idx])
-        return selected
-
-    def _load_items(self, select_store_index=None):
-        self.tree.delete(*self.tree.get_children())
-        self._view_indices = self._sorted_store_indices()
-        for view_idx, store_idx in enumerate(self._view_indices):
-            c = self.store.items[store_idx]
-            tp = constants.CONDITION_TYPES.get(c.get("type", ""), "?")
-            tag = c.get("tag", "")
-            db_label = c.get("database_label", "")
-            review = periodic_review_summary(c)["label"]
-            dt = c.get("saved_at", "")[:16].replace("T", " ")
-            self.tree.insert("", tk.END, iid=str(view_idx), values=[c.get("name", ""), tag, db_label, review, tp, dt])
-        self.lbl_count.config(text=f"({len(self.store.items)} salvate)")
-        if select_store_index is not None and select_store_index in self._view_indices:
-            view_idx = self._view_indices.index(select_store_index)
-            self.tree.selection_set(str(view_idx))
-            self.tree.focus(str(view_idx))
-            self.tree.see(str(view_idx))
-
-    def _toggle_periodic_review_fields(self):
-        enabled = self.var_periodic_review_enabled.get()
-        self.cmb_periodic_review_cycle.configure(state="readonly" if enabled else tk.DISABLED)
-        self.ent_periodic_review_note.configure(state=tk.NORMAL if enabled else tk.DISABLED)
-
-    def _review_cycle_display(self, cycle):
-        normalized = str(cycle or "").strip().lower()
-        for label, key in PERIODIC_REVIEW_CYCLE_CHOICES:
-            if key == normalized:
-                return label
-        return PERIODIC_REVIEW_CYCLE_CHOICES[-1][0]
-
-    def _review_cycle_key(self):
-        current = self.var_periodic_review_cycle.get().strip()
-        for label, key in PERIODIC_REVIEW_CYCLE_CHOICES:
-            if label == current:
-                return key
-        return "monthly"
-        
-    def _get_sel(self):
-        indices = self._selected_store_indices()
-        if not indices:
-            return None
-        return self.store.items[indices[0]]
-
-    def _on_select(self, _evt):
-        indices = self._selected_store_indices()
-        if not indices: return
-        idx = indices[0]
-        c = self.store.items[idx]
-        self.var_name.set(c.get("name", ""))
-        self.var_tag.set(c.get("tag", ""))
-        self.var_db_label.set(c.get("database_label", ""))
-        self.txt_desc.delete("1.0", tk.END)
-        self.txt_desc.insert("1.0", c.get("description", ""))
-        self.var_periodic_review_enabled.set(bool(c.get("periodic_review_enabled")))
-        self.var_periodic_review_cycle.set(self._review_cycle_display(c.get("periodic_review_cycle", "monthly")))
-        self.var_periodic_review_note.set(c.get("periodic_review_note", ""))
-        last_ack = str(c.get("periodic_review_last_ack", "") or "").strip()
-        self.lbl_periodic_review_last_ack.config(
-            text=f"Ultimo aggiornamento periodo: {last_ack[:16].replace('T', ' ') if last_ack else '-'}"
-        )
-        self._toggle_periodic_review_fields()
-
-    def _edit_in_builder(self):
-        indices = self._selected_store_indices()
-        if not indices: return
-        idx = indices[0]
-        cond = self.store.items[idx]
-        if self.edit_callback:
-            self.edit_callback(cond)
-            self.destroy()
-
-    def _update_current(self):
-        indices = self._selected_store_indices()
-        if not indices: return
-        idx = indices[0]
-        self.store.items[idx]["name"] = self.var_name.get()
-        self.store.items[idx]["tag"] = self.var_tag.get()
-        self.store.items[idx]["database_label"] = self.var_db_label.get().strip()
-        self.store.items[idx]["description"] = self.txt_desc.get("1.0", tk.END).strip()
-        enabled = self.var_periodic_review_enabled.get()
-        self.store.items[idx]["periodic_review_enabled"] = enabled
-        self.store.items[idx]["periodic_review_cycle"] = self._review_cycle_key() if enabled else ""
-        self.store.items[idx]["periodic_review_note"] = self.var_periodic_review_note.get().strip() if enabled else ""
-        self.store.items[idx]["periodic_review_last_ack"] = datetime.now().isoformat() if enabled else ""
-        self.store._save()
-        self._load_items(select_store_index=idx)
-        self.refresh_callback()
-
-    def _delete_selected(self):
-        indices = self._selected_store_indices()
-        if not indices: return
-        if not messagebox.askyesno("Conferma", f"Eliminare {len(indices)} condizioni?"): return
-        indices = sorted(indices, reverse=True)
-        for i in indices: del self.store.items[i]
-        self.store._save()
-        self._load_items()
-        self.refresh_callback()
-
-    def _open_bulk_replace(self):
-        BulkFilterReplaceDialog(self, self.store, self._load_items)
-
-    def _verify_integrity(self):
-        if not self.store.items: return
-        parent_app = self.master
-        if not hasattr(parent_app, "db") or not parent_app.db.connected:
-            messagebox.showwarning("Errore", "Per verificare le tabelle devi aver prima caricato un Database aperto.")
-            return
-            
-        errors = []
-        for i, c in enumerate(self.store.items):
-            tables_to_check = []
-            if "table" in c: tables_to_check.append(c["table"])
-            if "tables" in c: tables_to_check.extend(c["tables"])
-            if "dest_table" in c: tables_to_check.append(c["dest_table"])
-            
-            for t in set(tables_to_check):
-                if not t: continue
-                try:
-                    query = f"SELECT TOP 1 * FROM [{t}]"
-                    parent_app.db.fetch(query)
-                except Exception as e:
-                    errors.append(f"Regola '{c.get('name', '?')}' -> Errore accesso tabella [{t}]")
-
-        if errors:
-            msg = "Attenzione! Rilevate anomalie nelle tabelle (potrebbero essere state rinominate):\n\n" + "\n".join(errors)
-            messagebox.showerror("Risultato Verifica: ERRORI", msg)
-        else:
-            messagebox.showinfo("Risultato Verifica: OK", "Ottimo! Tutte le tabelle salvate sono presenti e accessibili nel Database.")
-
-    def _do_export(self, items):
-        """Logica comune di esportazione: chiede il percorso e scrive il JSON."""
-        import json as _json
-        from datetime import datetime as _dt
-        if not items:
-            messagebox.showwarning("Attenzione", "Nessuna condizione da esportare.")
-            return
-        default_name = f"condizioni_{_dt.now().strftime('%Y%m%d_%H%M')}.json"
-        path = filedialog.asksaveasfilename(
-            title="Esporta condizioni",
-            defaultextension=".json",
-            filetypes=[("Condizioni AccessDBTool (*.json)", "*.json"), ("Tutti i file", "*.*")],
-            initialfile=default_name,
-        )
-        if not path:
-            return
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                _json.dump(items, f, indent=2, ensure_ascii=False)
-            messagebox.showinfo("Esportazione completata",
-                                f"Esportate {len(items)} condizioni in:\n{path}")
-        except Exception as e:
-            messagebox.showerror("Errore esportazione", str(e))
-
-    def _export_selected(self):
-        indices = self._selected_store_indices()
-        if not indices:
-            messagebox.showwarning("Attenzione", "Seleziona almeno una condizione dalla lista.")
-            return
-        items = [self.store.items[i] for i in indices]
-        self._do_export(items)
-
-    def _export_all(self):
-        self._do_export(list(self.store.items))
-
-
 class SimilarityBuilder(ttk.Frame):
     """Builder per similarity_check: mostra tutti i parametri necessari all'engine."""
     def __init__(self, parent, db=None, on_table_change=None):
@@ -1327,7 +1014,7 @@ class SimilarityBuilder(ttk.Frame):
         return count
 
     def set_config(self, c):
-        self.var_table.set(c.get("table") or (c.get("tables", [""])[0] if c.get("tables") else ""))
+        self.var_table.set(c.get("table") or c.get("source_table") or (c.get("tables", [""])[0] if c.get("tables") else ""))
         self._on_table_sel()
         self.var_col.set(c.get("column", ""))
         self.var_key.set(c.get("key_column", ""))
@@ -1763,7 +1450,7 @@ class FormulaBuilder(ttk.Frame):
         }
 
     def set_config(self, c):
-        self.var_table.set(c.get("table", ""))
+        self.var_table.set(c.get("table") or c.get("source_table", ""))
         self._on_table_sel()
         self.txt.delete("1.0", tk.END)
         self.txt.insert("1.0", c.get("formula", ""))
@@ -1851,7 +1538,7 @@ class ConcatSimilarityBuilder(ttk.Frame):
         return cfg
 
     def set_config(self, c):
-        t = c.get("table", "")
+        t = c.get("table") or c.get("source_table", "")
         self.var_table.set(t)
         self._on_table_sel()
         self.var_thresh.set(c.get("threshold", 80))
@@ -2007,7 +1694,7 @@ class LinkedTableBuilder(ttk.Frame):
 
     def set_config(self, c):
         self.sec1.set_config({
-            "table": c.get("table", ""),
+            "table": c.get("table") or c.get("source_table", ""),
             "conditions": c.get("conditions", []),
             "exclude_conditions": c.get("exclude_conditions", []),
         })
@@ -2283,7 +1970,7 @@ class FormatValidationBuilder(ttk.Frame):
         return cfg
 
     def set_config(self, c):
-        self.var_table.set(c.get("table", ""))
+        self.var_table.set(c.get("table") or c.get("source_table", ""))
         self._on_table_sel()
         conds = c.get("conditions", [])
         if conds:
@@ -2519,7 +2206,7 @@ class DailyCoverageBuilder(ttk.Frame):
         return cfg
 
     def set_config(self, c):
-        self.var_table.set(c.get("table", ""))
+        self.var_table.set(c.get("table") or c.get("source_table", ""))
         self._on_table_sel()
         self.var_day_col.set(c.get("day_column", ""))
         self.var_month_col.set(c.get("month_column", ""))
@@ -2669,7 +2356,7 @@ class MandatoryRecordBuilder(ttk.Frame):
         return cfg
 
     def set_config(self, c):
-        self.var_table.set(c.get("table", ""))
+        self.var_table.set(c.get("table") or c.get("source_table", ""))
         self._on_table_sel()
         self.var_dest_table.set(c.get("dest_table", ""))
         self._on_dest_table_sel()
@@ -2686,121 +2373,8 @@ class MandatoryRecordBuilder(ttk.Frame):
             self._add_dest_filter_row(cond["column"], cond["operator"], cond.get("value", ""))
 
 
-class BulkFilterReplaceDialog(tk.Toplevel):
-    def __init__(self, parent, store, on_complete):
-        super().__init__(parent)
-        self.title("Sostituisci Filtri in Blocco")
-        self.geometry("450x300")
-        self.store = store
-        self.on_complete = on_complete
-        
-        main = ttk.Frame(self, padding=20)
-        main.pack(fill=tk.BOTH, expand=True)
-
-        ttk.Label(main, text="Trova e Sostituisci Valori nei Filtri", font=("Segoe UI", 12, "bold")).pack(pady=(0, 15))
-        
-        ttk.Label(main, text="Colonna bersaglio (es. Mese):").pack(anchor=tk.W)
-        self.var_col = tk.StringVar()
-        self.ent_col = ttk.Entry(main, textvariable=self.var_col)
-        self.ent_col.pack(fill=tk.X, pady=(2, 10))
-        
-        ttk.Label(main, text="Valore ATTUALE da cercare (es. apr):").pack(anchor=tk.W)
-        self.var_old = tk.StringVar()
-        self.ent_old = ttk.Entry(main, textvariable=self.var_old)
-        self.ent_old.pack(fill=tk.X, pady=(2, 10))
-
-        ttk.Label(main, text="NUOVO Valore da impostare (es. mag):").pack(anchor=tk.W)
-        self.var_new = tk.StringVar()
-        self.ent_new = ttk.Entry(main, textvariable=self.var_new)
-        self.ent_new.pack(fill=tk.X, pady=(2, 15))
-        
-        btn_frm = ttk.Frame(main)
-        btn_frm.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(btn_frm, text="ANNULLA", command=self.destroy).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frm, text="ESEGUI SOSTITUZIONE", command=self._execute).pack(side=tk.RIGHT, padx=5)
-        
-        self.transient(parent)
-        self.grab_set()
-
-    def _execute(self):
-        col = self.var_col.get().strip()
-        old_val = self.var_old.get().strip()
-        new_val = self.var_new.get().strip()
-        
-        if not col:
-            messagebox.showwarning("Errore", "Specifica la colonna bersaglio.")
-            return
-            
-        # Collect statistics
-        modified_conditions_count = 0
-        total_replacements = 0
-        
-        for idx, cond in enumerate(self.store.items):
-            changed = False
-            
-            # Check generic list conditions
-            for list_key in ["conditions", "exclude_conditions", "dest_conditions", "exclude_dest_conditions"]:
-                if list_key in cond and isinstance(cond[list_key], list):
-                    for item in cond[list_key]:
-                        orig_val = item.get("value", "")
-                        if item.get("column") == col and str(orig_val) == old_val:
-                            if isinstance(orig_val, int):
-                                try: item["value"] = int(new_val)
-                                except ValueError: item["value"] = new_val
-                            elif isinstance(orig_val, float):
-                                try: item["value"] = float(new_val)
-                                except ValueError: item["value"] = new_val
-                            else:
-                                item["value"] = new_val
-                            changed = True
-                            total_replacements += 1
-            
-            # Check formula conditions
-            if cond.get("type") == "formula_condition" and "formula" in cond:
-                # Basic string replacement in formula (risky but might be what user wants, maybe not, let's leave it out or be very careful. Actually better to skip formula)
-                pass
-
-            # Check daily coverage direct keys
-            if cond.get("type") == "daily_coverage_check":
-                if cond.get("month_column") == col:
-                    orig_val = cond.get("month_value", "")
-                    if str(orig_val) == old_val:
-                        if isinstance(orig_val, int):
-                            try: cond["month_value"] = int(new_val)
-                            except ValueError: cond["month_value"] = new_val
-                        else: cond["month_value"] = new_val
-                        changed = True
-                        total_replacements += 1
-                if cond.get("week_column") == col:
-                    orig_val = cond.get("week_value", "")
-                    if str(orig_val) == old_val:
-                        if isinstance(orig_val, int):
-                            try: cond["week_value"] = int(new_val)
-                            except ValueError: cond["week_value"] = new_val
-                        else: cond["week_value"] = new_val
-                        changed = True
-                        total_replacements += 1
-            
-            if changed:
-                modified_conditions_count += 1
-                    
-        if total_replacements == 0:
-            messagebox.showinfo("Nessuna Modifica", f"Non è stato trovato nessun filtro per la colonna '{col}' con il valore '{old_val}'.")
-            return
-            
-        if messagebox.askyesno("Conferma Modifiche", f"Trovati {total_replacements} filtri in {modified_conditions_count} condizioni salvate.\nVuoi procedere con la sostituzione in '{new_val}'?"):
-            self.store._save()
-            messagebox.showinfo("Fatto", "Sostituzioni effettuate correttamente!")
-            if self.on_complete:
-                self.on_complete()
-            self.destroy()
-        else:
-            # We must reload the store to undo in-place modifications if user cancels.
-            self.store._load()
-
-
 # ======================================================================== #
-#  BUILDER AVANZATI v5                                                       #
+#  BUILDER AVANZATI                                                          #
 # ======================================================================== #
 
 class DependentConditionBuilder(ttk.Frame):
@@ -2884,7 +2458,7 @@ class DependentConditionBuilder(ttk.Frame):
         }
 
     def set_config(self, c):
-        self.var_table.set(c.get("table", ""))
+        self.var_table.set(c.get("table") or c.get("source_table", ""))
         self._on_table_sel()
         self._display_cols = list(c.get("display_columns", []))
         self._disp_lbl.config(text=", ".join(self._display_cols) if self._display_cols else "(nessuna)")
@@ -3045,7 +2619,7 @@ class RowCrossColumnBuilder(ttk.Frame):
         }
 
     def set_config(self, c):
-        self.var_table.set(c.get("table", ""))
+        self.var_table.set(c.get("table") or c.get("source_table", ""))
         self._on_table_sel()
         self.var_left.set(c.get("left_column", ""))
         self.var_op.set(c.get("operator", ">="))
@@ -3252,7 +2826,7 @@ class LookupValidationBuilder(ttk.Frame):
         }
 
     def set_config(self, c):
-        self.var_table.set(c.get("table", ""))
+        self.var_table.set(c.get("table") or c.get("source_table", ""))
         self._on_table_sel()
         self.var_col.set(c.get("column", ""))
         self.txt_allowed.delete("1.0", tk.END)
@@ -3455,7 +3029,7 @@ class AggregateThresholdBuilder(ttk.Frame):
         }
 
     def set_config(self, c):
-        self.var_table.set(c.get("table", ""))
+        self.var_table.set(c.get("table") or c.get("source_table", ""))
         self._on_table_sel()
         self._group_by = list(c.get("group_by", []))
         label = ", ".join(self._group_by) if self._group_by else "(nessuna)"
@@ -3640,7 +3214,7 @@ class DuplicateBuilder(ttk.Frame):
         return cfg
 
     def set_config(self, c):
-        self.var_table.set(c.get("table", ""))
+        self.var_table.set(c.get("table") or c.get("source_table", ""))
         self._on_table_sel()
         self.var_col.set(c.get("column", ""))
         self.var_key.set(c.get("key_column", ""))

@@ -12,6 +12,7 @@ class ResultController:
     def __init__(self, state):
         self.state = state
         self._on_results_callback = None
+        self._on_results_found_callback = None  # chiamata quando count > 0 (es. per auto-switch tab)
         self._export_csv_callback = None
         self._edit_record_callback = None
         self._bulk_replace_callback = None
@@ -20,6 +21,10 @@ class ResultController:
 
     def set_results_callback(self, callback):
         self._on_results_callback = callback
+
+    def set_results_found_callback(self, callback):
+        """Callback chiamato quando i risultati contengono record (per auto-switch a report)."""
+        self._on_results_found_callback = callback
 
     def set_export_csv_callback(self, callback):
         self._export_csv_callback = callback
@@ -79,7 +84,27 @@ class ResultController:
         self.state.current_result = res
         if self._on_results_callback:
             self._on_results_callback(res)
-        self.state.status.set("Risultati caricati.")
+        count = res.get("count", 0) if isinstance(res, dict) else 0
+        if count == 0:
+            self.state.status.set("Esecuzione completata — nessun problema trovato.")
+            # Mostra un messagebox OK sul thread principale (posticipato via after)
+            try:
+                master = self.state.status.master
+                if master:
+                    master.after(100, lambda: messagebox.showinfo(
+                        "OK", "Nessun problema trovato in questo controllo."))
+            except Exception:
+                pass
+        else:
+            self.state.status.set(f"Risultati caricati ({count} record).")
+            # Auto-switch al report / dashboard per mostrare i risultati
+            if self._on_results_found_callback:
+                try:
+                    master = self.state.status.master
+                    if master:
+                        master.after(100, self._on_results_found_callback)
+                except Exception:
+                    pass
 
     def result_supports_direct_update(self):
         res = self.state.current_result

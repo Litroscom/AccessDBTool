@@ -93,7 +93,8 @@ class DataProfiler:
     def _get_sample(self, table, column, limit=50):
         """Estrae un campione di dati non nulli da una tabella."""
         try:
-            sql = f"SELECT TOP {limit} [{column}] FROM [{table}] WHERE [{column}] IS NOT NULL AND [{column}] <> ''"
+            qi = self.db._qi
+            sql = f"SELECT TOP {limit} {qi(column)} FROM {qi(table)} WHERE {qi(column)} IS NOT NULL AND {qi(column)} <> ''"
             _, rows = self.db.fetch(sql)
             return [r[0] for r in rows if r[0] is not None]
         except Exception:

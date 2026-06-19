@@ -49,8 +49,20 @@ class BuilderView(ttk.Frame):
         )
         self.cmb_db.pack(side=tk.LEFT, padx=4)
 
-        self.accordion_frame = ttk.Frame(self)
-        self.accordion_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        # Canvas + scrollbar per permettere lo scroll quando il contenuto eccede
+        self.accordion_canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
+        self.accordion_scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.accordion_canvas.yview)
+        self.accordion_frame = ttk.Frame(self.accordion_canvas)
+        self.accordion_frame.bind("<Configure>", lambda _e: self._update_scrollregion())
+        self.accordion_canvas.create_window((0, 0), window=self.accordion_frame, anchor="nw", tags="acc_frame")
+        self.accordion_canvas.configure(yscrollcommand=self.accordion_scrollbar.set)
+        self.accordion_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=(0, 8))
+        self.accordion_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=(0, 8))
+        # Adatta larghezza del frame interno alla larghezza del canvas
+        self.accordion_canvas.bind("<Configure>", lambda _e: self._update_scrollregion(), add="+")
+        # Mouse wheel scrolling
+        self.accordion_canvas.bind("<Enter>", lambda _e: self._bind_mousewheel())
+        self.accordion_canvas.bind("<Leave>", lambda _e: self._unbind_mousewheel())
 
         self._create_accordion_section("base", "Base", expanded=True)
         self._create_accordion_section("filtri", "Filtri", expanded=False)
@@ -88,8 +100,6 @@ class BuilderView(ttk.Frame):
                    command=self._run_current,
                    bootstyle="danger").pack(side=tk.RIGHT, padx=2)
 
-        self.frm_dyn = ttk.Frame(self)
-
         self.col_selector = ColumnSelector(self)
         self.col_selector.pack_forget()
 
@@ -115,6 +125,87 @@ class BuilderView(ttk.Frame):
             "built": False,
         }
 
+    def _bind_mousewheel(self):
+        self.accordion_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _unbind_mousewheel(self):
+        self.accordion_canvas.unbind_all("<MouseWheel>")
+
+    def _on_mousewheel(self, event):
+        self.accordion_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _update_scrollregion(self):
+        """Aggiorna la scrollregion del canvas in base al contenuto attuale."""
+        try:
+            if self.accordion_canvas.winfo_exists():
+                width = self.accordion_canvas.winfo_width()
+                if width > 1:
+                    self.accordion_canvas.itemconfig("acc_frame", width=width)
+                self.accordion_canvas.configure(scrollregion=self.accordion_canvas.bbox("all"))
+        except Exception as e:
+            logger.debug("_update_scrollregion errore: %s", e)
+
+    def _sync_accordion_from_builder(self):
+        """Dopo set_config(), aggiorna i widget accordion Filtri/Esclusioni
+        con i dati correnti del builder attivo. Se i widget non esistono ancora
+        (es. prima apertura), forza la costruzione della sezione."""
+        if not self.state.active_builder:
+            return
+        config = self.state.active_builder.get_config()
+        table = config.get("table", "")
+        # Filtri
+        if self._filtro_widget is not None:
+            try:
+                self._filtro_widget.set_config({
+                    "table": table,
+                    "conditions": config.get("conditions", []),
+                })
+            except Exception:
+                pass
+        elif self._sections.get("filtri", {}).get("expanded"):
+            # Sezione espansa ma widget perso: ricostruisci
+            section = self._sections["filtri"]
+            for w in section["body"].winfo_children():
+                w.destroy()
+            section["built"] = False
+            self._build_section_content("filtri")
+            section["built"] = True
+        # Esclusioni
+        logger.info("_sync_accordion_from_builder: filtro_widget=%s, esclusioni_widget=%s, expanded=%s",
+                    self._filtro_widget is not None, self._esclusioni_widget is not None,
+                    self._sections.get("esclusioni", {}).get("expanded"))
+        if self._esclusioni_widget is not None:
+            try:
+                exc_conds = config.get("exclude_conditions", [])
+                self._esclusioni_widget.set_config({
+                    "table": table,
+                    "conditions": [],
+                    "exclude_conditions": exc_conds,
+                })
+                logger.info("_sync_accordion_from_builder: aggiornate %s esclusioni accordion", len(exc_conds))
+            except Exception as e:
+                logger.warning("_sync_accordion_from_builder: aggiornamento esclusioni fallito: %s", e)
+        elif self._sections.get("esclusioni", {}).get("expanded"):
+            # Sezione espansa ma widget perso: ricostruisci
+            section = self._sections["esclusioni"]
+            for w in section["body"].winfo_children():
+                w.destroy()
+            section["built"] = False
+            self._build_section_content("esclusioni")
+            section["built"] = True
+            # Ricarica i dati appena costruiti con il config attuale del builder
+            try:
+                exc_conds = config.get("exclude_conditions", [])
+                if self._esclusioni_widget is not None:
+                    self._esclusioni_widget.set_config({
+                        "table": table,
+                        "conditions": [],
+                        "exclude_conditions": exc_conds,
+                    })
+                    logger.info("_sync_accordion_from_builder: popolate %s esclusioni dopo ricostruzione", len(exc_conds))
+            except Exception as e:
+                logger.warning("_sync_accordion_from_builder: popolamento esclusioni dopo ricostruzione fallito: %s", e)
+
     def _toggle_accordion(self, section_id):
         section = self._sections[section_id]
         if section["expanded"]:
@@ -129,6 +220,7 @@ class BuilderView(ttk.Frame):
             section["body"].pack(fill=tk.BOTH, expand=True)
             section["expanded"] = True
             section["header"].configure(bootstyle="primary")
+        self._update_scrollregion()
 
     def _build_section_content(self, section_id):
         body = self._sections[section_id]["body"]
@@ -145,10 +237,7 @@ class BuilderView(ttk.Frame):
 
     def _build_section_base(self, body):
         if self.state.active_builder:
-            try:
-                self.state.active_builder.pack(in_=body, fill=tk.BOTH, expand=True)
-            except Exception:
-                ttk.Label(body, text="Seleziona un tipo analisi per iniziare.").pack()
+            self.state.active_builder.pack(in_=body, fill=tk.BOTH, expand=True)
         else:
             ttk.Label(body, text="Seleziona un tipo analisi per iniziare.").pack()
 
@@ -193,12 +282,14 @@ class BuilderView(ttk.Frame):
         excl = MultiConditionBuilder(
             body, self.state.db,
             on_table_change=self._on_builder_table_change,
-            title="Esclusioni (opzionale)"
+            title="Esclusioni (opzionale)",
+            show_conditions=False,
         )
         excl.pack(fill=tk.BOTH, expand=True)
         excl.set_config({
             "table": table,
-            "conditions": exclude_conditions,
+            "conditions": [],
+            "exclude_conditions": exclude_conditions,
         })
         self._esclusioni_widget = excl
 
@@ -314,7 +405,12 @@ class BuilderView(ttk.Frame):
 
         if self._esclusioni_widget is not None:
             try:
-                esclusioni = self._esclusioni_widget.get_conditions()
+                # Il widget Esclusioni è un MultiConditionBuilder: le esclusioni
+                # possono trovarsi sia nelle righe "conditions" (caricate dal
+                # salvato) sia nelle righe "exclude" (aggiunte col pulsante
+                # "+ Aggiungi esclusione"). Uniamo entrambe per non perdere dati.
+                esclusioni = (self._esclusioni_widget.get_conditions()
+                              + self._esclusioni_widget.get_exclude_conditions())
                 if esclusioni:
                     config["exclude_conditions"] = esclusioni
                 elif "exclude_conditions" in config:
@@ -379,18 +475,23 @@ class BuilderView(ttk.Frame):
         self.state.active_ctype = rev.get(ctype_name)
         self._update_builder_fields()
         self._show_base()
+        self._invalidate_accordion_sections()
 
     def _on_builder_table_change(self, table):
         self.state.sel_tables = [table]
-        if hasattr(self, "col_selector") and self.col_selector:
+        if hasattr(self, "col_selector") and self.col_selector and self.state.db:
+            # Preserva le selezioni correnti: set_columns distrugge e ricrea
+            # tutte le checkbox, ma vogliamo mantenere le scelte dell'utente.
+            old_selected = self.col_selector.get_selected()
             self.col_selector.set_columns(self.state.db.columns(table))
+            if old_selected:
+                self.col_selector.set_selected(old_selected)
 
     def _update_builder_fields(self):
-        parent = self.frm_dyn
-        if parent is None:
-            return
-        for w in parent.winfo_children():
-            w.destroy()
+        # I builder vengono creati direttamente nel corpo dell'accordion "Base"
+        # dal metodo _build_section_base, che viene chiamato da _show_base
+        # subito dopo questo metodo. Qui ci limitiamo a distruggere i builder
+        # precedenti e crearne uno nuovo (che sara' impacchettato in _show_base).
         self.state.active_builder = None
         if not self.state.active_ctype:
             return
@@ -398,6 +499,10 @@ class BuilderView(ttk.Frame):
         ctype = self.state.active_ctype
         db = self.state.db
         import ui_components
+
+        # Il builder viene creato con parent temporaneo = self;
+        # _show_base lo spostera' nell'accordion base appena costruito.
+        parent = self
 
         if ctype == "value_comparison":
             self.state.active_builder = ui_components.ValueComparisonBuilder(parent, db, self._on_builder_table_change)
@@ -460,11 +565,6 @@ class BuilderView(ttk.Frame):
                 logger.error(f"AggregateThresholdBuilder init error: {_e}")
                 self.state.status.set(f"Errore builder: {_e}")
 
-        if self.state.active_builder:
-            self.state.active_builder.pack(fill=tk.BOTH, expand=True)
-        elif parent.winfo_ismapped():
-            ttk.Label(parent, text=f"Configurazione standard per: {self.cmb_ctype.get()}").pack()
-
     def _show_base(self):
         base = self._sections["base"]
         for w in base["body"].winfo_children():
@@ -476,6 +576,7 @@ class BuilderView(ttk.Frame):
             base["header"].configure(bootstyle="primary")
         self._build_section_base(base["body"])
         base["built"] = True
+        self._update_scrollregion()
 
     def load_condition(self, cond):
         """Carica una condizione (dict) nel builder: costruisce il widget del
@@ -485,12 +586,13 @@ class BuilderView(ttk.Frame):
             return
         # Tabella della condizione: deve restare collegata al builder, altrimenti
         # le modifiche (es. aggiungere un filtro) partono senza tabella.
-        table = cond.get("table") or (cond.get("tables", [""])[0] if cond.get("tables") else "")
+        table = cond.get("table") or cond.get("source_table") or (cond.get("tables", [""])[0] if cond.get("tables") else "")
         if table:
             self.state.sel_tables = [table]
         if self.library_ctrl:
             self.library_ctrl.load_cond_into_builder(cond)
         self.sync_ctype()
+        self._invalidate_accordion_sections()
         self._on_ctype_change()
         if self.state.active_builder and hasattr(self.state.active_builder, "set_config"):
             # 'table' e 'display_columns' RESTANO nel config: i builder leggono
@@ -499,10 +601,18 @@ class BuilderView(ttk.Frame):
                       if k not in ("name", "description", "tag", "type",
                                     "saved_at", "updated_at",
                                     "database_label", "_group_name")}
+            logger.info("load_condition: tipo=%s, table=%s, has exceptions=%s, has exclude_conditions=%s",
+                        cond.get("type"), table, bool(config.get("exceptions")), bool(config.get("exclude_conditions")))
             try:
                 self.state.active_builder.set_config(config)
+                cfg_after = self.state.active_builder.get_config()
+                logger.info("load_condition: dopo set_config, exclude_conditions=%s, exceptions=%s",
+                            cfg_after.get("exclude_conditions"), cfg_after.get("exceptions", [])[:5])
             except Exception as e:
                 logger.warning("set_config in load_condition fallita: %s", e)
+        # Dopo set_config, sincronizza i widget accordion (Filtri/Esclusioni)
+        # con i dati appena caricati nel builder
+        self._sync_accordion_from_builder()
         # Allinea il selettore colonne report alla tabella ripristinata.
         if table and getattr(self, "col_selector", None) and self.state.db:
             try:
@@ -512,6 +622,10 @@ class BuilderView(ttk.Frame):
                     self.col_selector.set_selected(disp)
             except Exception as e:
                 logger.warning("aggiornamento col_selector in load_condition fallito: %s", e)
+        # Auto-espandi le sezioni accordion che contengono dati
+        self._auto_expand_sections(cond)
+        # Forza aggiornamento scrollregion dopo aver caricato tutto
+        self.after(100, self._update_scrollregion)
 
     def _load_from_lib(self):
         if not self.library_ctrl:
@@ -525,8 +639,8 @@ class BuilderView(ttk.Frame):
                 break
 
     def _clear_builder(self):
-        for w in self.frm_dyn.winfo_children():
-            w.destroy()
+        if self.state.active_builder:
+            self.state.active_builder.destroy()
         self.state.active_builder = None
         self.state.active_ctype = None
         self.cmb_ctype.set("")
@@ -580,13 +694,20 @@ class BuilderView(ttk.Frame):
         self._sync_builder_from_sections()
         ctype = self.state.active_ctype
         config = self.state.active_builder.get_config() if self.state.active_builder else {}
-        display_cols = self.col_selector.get_selected() if hasattr(self, "col_selector") else []
+        # display_cols = None se il selettore colonne non è stato inizializzato
+        # (es. nessuna tabella caricata), così update_to_lib non cancella le
+        # display_columns esistenti.
+        if hasattr(self, "col_selector") and self.col_selector.col_vars:
+            display_cols = self.col_selector.get_selected()
+        else:
+            display_cols = None
         self.library_ctrl.update_to_lib(ctype, config, display_cols)
         self.refresh_lib()
 
     def _run_current(self):
         if not self.result_ctrl:
             return
+        self._sync_builder_from_sections()
         display_cols = self.col_selector.get_selected() if hasattr(self, "col_selector") else []
         self.result_ctrl.run_current(display_cols)
 
@@ -595,6 +716,62 @@ class BuilderView(ttk.Frame):
         self.cmb_lib["values"] = names
         if self.state.var_saved.get() not in names:
             self.state.var_saved.set("")
+
+    def _invalidate_accordion_sections(self):
+        """Invalida tutte le sezioni accordion tranne 'base' (che viene
+        gestita separatamente da _show_base). Distrugge i widget esistenti
+        e forza la ricostruzione al prossimo toggle/sync, in modo che vengano
+        creati con il builder attivo corretto."""
+        # Reset dei riferimenti PRIMA di ricostruire, così _build_section_content
+        # può assegnare i nuovi widget correttamente
+        self._filtro_widget = None
+        self._esclusioni_widget = None
+        for section_id in ("filtri", "esclusioni", "periodicita"):
+            section = self._sections.get(section_id)
+            if section is None:
+                continue
+            for w in section["body"].winfo_children():
+                w.destroy()
+            section["built"] = False
+            # NON ricostruire qui se la sezione è espansa: potremmo farlo con
+            # active_builder=None (ad es. durante _on_ctype_change) e creare un
+            # widget placeholder che poi blocca il caricamento dei dati.
+            # La ricostruzione avverrà in _sync_accordion_from_builder o
+            # _auto_expand_sections quando il builder è disponibile.
+
+    def _auto_expand_sections(self, cond):
+        """Espande automaticamente le sezioni accordion che contengono dati,
+        così che il costruttore mostri tutto il configurato in modo leggibile."""
+        has_conditions = bool(cond.get("conditions") or cond.get("exclude_conditions") or cond.get("exceptions"))
+        has_periodic = bool(cond.get("periodic_review_enabled"))
+        # Alcuni tipi di condizione hanno condizioni in campi diversi
+        # (es. dependent_condition_check ha 'antecedent'/'consequent')
+        if not has_conditions:
+            for alt_key in ("antecedent", "consequent", "dest_conditions",
+                           "exclude_dest_conditions"):
+                if cond.get(alt_key):
+                    has_conditions = True
+                    break
+
+        sections_to_expand = []
+        if has_conditions:
+            # Espandi sia Filtri che Esclusioni se almeno uno dei due ha dati
+            sections_to_expand.extend(["filtri", "esclusioni"])
+        if has_periodic:
+            sections_to_expand.append("periodicita")
+
+        for section_id in sections_to_expand:
+            section = self._sections.get(section_id)
+            if section is None:
+                continue
+            if not section["expanded"]:
+                # Costruisci il contenuto se non ancora fatto
+                if not section["built"]:
+                    self._build_section_content(section_id)
+                    section["built"] = True
+                section["body"].pack(fill=tk.BOTH, expand=True)
+                section["expanded"] = True
+                section["header"].configure(bootstyle="primary")
 
     def sync_ctype(self):
         if self.state.active_ctype:

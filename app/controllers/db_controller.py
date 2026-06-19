@@ -117,3 +117,40 @@ class DBController:
             if normalized_tag in label_norm or normalized_tag in stem_norm:
                 matches.append(label)
         return matches[0] if len(matches) == 1 else ""
+
+    def group_database_label(self, conditions):
+        for cond in conditions or []:
+            label = str(cond.get("database_label", "") or "").strip()
+            if label:
+                return label
+        return self.state.current_db_label
+
+    def database_registry_rows(self):
+        rows = []
+        current_path = str(getattr(self.state.db, "db_path", "") or "").strip()
+        current_path_norm = os.path.normcase(current_path) if current_path else ""
+        for entry in self.state.db_registry.entries():
+            label = entry.get("label", "")
+            path = entry.get("path", "")
+            path_exists = bool(path and os.path.exists(path))
+            path_norm = os.path.normcase(path) if path else ""
+            if self.state.db.connected and current_path_norm and path_norm == current_path_norm:
+                state = "APERTO"
+            elif path_exists:
+                state = "PRONTO"
+            else:
+                state = "DA RICOLLEGARE"
+            rows.append({"label": label, "path": path, "state": state})
+        return rows
+
+    def run_profiler(self):
+        if not self.state.db.connected:
+            return messagebox.showwarning("!", "Apri un Database prima di eseguire il profiler.")
+        try:
+            from data_profiler import DataProfiler
+            profiler = DataProfiler(self.state.db)
+            self.state.current_insights = profiler.generate_insights()
+            self.state.status.set(f"Profiler completato: {len(self.state.current_insights)} insight generati.")
+        except Exception as e:
+            logger.error(f"Errore profiler: {e}")
+            messagebox.showerror("Errore profiler", str(e))

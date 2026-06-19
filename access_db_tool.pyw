@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Access DB Quality Control Tool - v7.2
+Access DB Quality Control Tool - v{constants.APP_VERSION}
 Entry point principale - Architettura modulare con controller.
 """
 
@@ -54,7 +54,7 @@ logger = setup_logging(constants._BASE_DIR)
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        logger.info("Avvio Access DB Quality Control Tool v7.2...")
+        logger.info(f"Avvio Access DB Quality Control Tool v{constants.APP_VERSION}...")
 
         db = DatabaseManager()
         executor = ConditionExecutor(db)
@@ -83,6 +83,9 @@ class App(tk.Tk):
         self.result_ctrl = ResultController(self.state)
         self.batch_ctrl = BatchController(self.state, self.db_ctrl, self.result_ctrl)
         self.app_ctrl = AppController(self.state, self.db_ctrl)
+
+        # Auto-switch al tab Dashboard quando ci sono risultati
+        self.result_ctrl.set_results_found_callback(lambda: self._go_to_tab("dashboard"))
 
         self.nav_buttons = {}
         self.main_panel = None
@@ -131,8 +134,8 @@ class App(tk.Tk):
         cm = tk.Menu(mb, tearoff=0, bg=menu_bg, fg=menu_fg, activebackground=menu_active_bg,
                      activeforeground=menu_active_fg, disabledforeground=menu_disabled_fg,
                      font=("Segoe UI", 9))
-        cm.add_command(label="Salva condizione corrente...", command=lambda: self.library_ctrl.save_cond(False))
-        cm.add_command(label="Salva come nuova...", command=lambda: self.library_ctrl.save_cond(True))
+        cm.add_command(label="Salva condizione corrente...", command=self._menu_save_cond)
+        cm.add_command(label="Salva come nuova...", command=self._menu_save_cond_new)
         cm.add_command(label="Gestisci libreria...", command=self.library_ctrl.open_manager)
         cm.add_separator()
         cm.add_command(label="Esporta libreria condizioni...", command=self.library_ctrl.export_conditions)
@@ -200,6 +203,18 @@ class App(tk.Tk):
         else:
             self._build_layout()
             self._switch_tab(tab_id)
+
+    def _menu_save_cond(self):
+        """Menu Salva condizione corrente: sincronizza le sezioni accordion
+        prima di salvare, per non perdere le modifiche in Filtri/Esclusioni."""
+        if self.current_view and hasattr(self.current_view, "_sync_builder_from_sections"):
+            self.current_view._sync_builder_from_sections()
+        self.library_ctrl.save_cond(False)
+
+    def _menu_save_cond_new(self):
+        if self.current_view and hasattr(self.current_view, "_sync_builder_from_sections"):
+            self.current_view._sync_builder_from_sections()
+        self.library_ctrl.save_cond(True)
 
     def _verify_active_formula(self):
         if self.state.active_ctype == "formula_condition" and self.state.active_builder and hasattr(self.state.active_builder, "verify_formula"):

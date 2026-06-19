@@ -34,6 +34,7 @@ class AppController:
             btn.configure(bootstyle="secondary-outline")
         nav_buttons[tab_id].configure(bootstyle="primary")
 
+        self.state.active_builder = None
         for w in main_panel.winfo_children():
             w.destroy()
 

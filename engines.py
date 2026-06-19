@@ -14,9 +14,11 @@ except ImportError:
 logger = logging.getLogger("AccessDBTool.Engines")
 
 
-def _qi(name):
-    """Quota un identificatore SQL in modo sicuro per Access (escape della parentesi chiusa)."""
-    return "[" + str(name).replace("]", "]]") + "]"
+from db_manager import DatabaseManager
+
+# Quota un identificatore SQL in modo sicuro per Access (escape della parentesi chiusa).
+# Delegato a DatabaseManager._qi per evitare duplicazione.
+_qi = DatabaseManager._qi
 
 class SimilarityEngine:
     @staticmethod
@@ -80,6 +82,7 @@ class SimilarityEngine:
         exc_single = set()
         exc_pairs = set()
         exc_key_pairs = set()   # coppie di chiavi ID specifiche (formato "IDcol:val | IDcol:val")
+        exc_keys = set()        # singoli ID record da escludere (es. "39716" o "ID:39716")
         if exceptions:
             for e in exceptions:
                 s = str(e).strip()
@@ -93,6 +96,12 @@ class SimilarityEngine:
                     else:
                         p_up = sorted([p.strip().upper() for p in parts])
                         exc_pairs.add(tuple(p_up))
+                elif ":" in s:
+                    # Singolo ID record: "ID:39716"
+                    exc_keys.add(s.split(":", 1)[1].strip().upper())
+                elif s.isdigit():
+                    # Singolo ID record numerico (molto comune nelle condizioni importate)
+                    exc_keys.add(s.upper())
                 else:
                     exc_single.add(s.strip().upper())
 
@@ -158,9 +167,13 @@ class SimilarityEngine:
                 if u1 in exc_single or u2 in exc_single: continue
                 pair = tuple(sorted([u1, u2]))
                 if pair in exc_pairs: continue
+                # Controllo esclusione per singoli ID record
+                k1_str = str(it1["key"]).upper()
+                k2_str = str(it2["key"]).upper()
+                if exc_keys and (k1_str in exc_keys or k2_str in exc_keys): continue
                 # Controllo esclusione per coppia di ID record
                 if exc_key_pairs:
-                    kpair = tuple(sorted([str(it1["key"]).upper(), str(it2["key"]).upper()]))
+                    kpair = tuple(sorted([k1_str, k2_str]))
                     if kpair in exc_key_pairs: continue
                 if u1 == u2: continue
 
@@ -802,11 +815,11 @@ class ConditionExecutor:
                     try:
                         parsed = datetime.datetime.strptime(str(val).split(" ")[0], "%Y-%m-%d")
                         found_dates.add(parsed.date())
-                    except:
+                    except (ValueError, TypeError):
                         try:
                             parsed = datetime.datetime.strptime(str(val).split(" ")[0], "%d/%m/%Y")
                             found_dates.add(parsed.date())
-                        except:
+                        except (ValueError, TypeError):
                             found_dates.add(str(val).strip().upper())
         except Exception as e:
             return self._error(f"Errore SQL: {e}")
@@ -824,8 +837,10 @@ class ConditionExecutor:
             if len(found_dates) < expected_count:
                 missing_days = [f"Solo {len(found_dates)} giorni presenti su {expected_count} attesi"]
 
-        mese = next((cond["value"] for cond in conds if cond["column"] == c.get("month_column")), "")
-        sett = next((cond["value"] for cond in conds if cond["column"] == c.get("week_column")), "")
+        mese_vals = [cond["value"] for cond in conds if cond["column"] == c.get("month_column")]
+        sett_vals = [cond["value"] for cond in conds if cond["column"] == c.get("week_column")]
+        mese = mese_vals[-1] if mese_vals else ""
+        sett = sett_vals[-1] if sett_vals else ""
 
         for md in missing_days:
             row = [md]
