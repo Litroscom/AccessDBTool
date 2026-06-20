@@ -1886,15 +1886,17 @@ class FormatValidationBuilder(ttk.Frame):
         return result
 
     def set_exclude_conditions(self, conditions):
-        for row in list(self._exclude_cond_rows):
-            self._remove_exclude_cond_row(row)
+        for row in list(self._excl_rows):
+            self._remove_excl_row(row)
         for cond in conditions:
-            self._add_exclude_cond_row(
+            self._add_excl_row(
                 col=cond.get("column", ""),
                 op=cond.get("operator", "="),
                 val=str(cond.get("value", "")),
-                logic=cond.get("logic", "AND"),
             )
+            # Ripristina il logic (AND/OR) della riga appena aggiunta
+            if self._excl_rows:
+                self._excl_rows[-1]["logic"].set(cond.get("logic", "AND"))
 
     def _exception_column_score(self, column):
         col = str(column).strip().lower()
@@ -2251,20 +2253,25 @@ class MandatoryRecordBuilder(ttk.Frame):
         self._frm_filters = ttk.Frame(self)
         self._frm_filters.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10)
         ttk.Button(self, text="+ Filtro Tab Sorgente", command=self._add_filter_row).grid(row=3, column=0, columnspan=2, sticky="w", pady=5)
-        
-        ttk.Separator(self, orient=tk.HORIZONTAL).grid(row=4, column=0, columnspan=2, sticky="ew", pady=10)
 
-        ttk.Label(self, text="Incrocio Destinazione (Opzionale):", font=("Segoe UI", 9, "bold")).grid(row=5, column=0, columnspan=2, sticky="w")
-        ttk.Label(self, text="Se per soddisfare il requisito serve un incrocio (es. esistere in Volontariato E in Diffusori).").grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        self._excl_rows = []
+        self._frm_excl = ttk.Frame(self)
+        self._frm_excl.grid(row=4, column=0, columnspan=2, sticky="ew", padx=10)
+        ttk.Button(self, text="+ Esclusione Tab Sorgente", command=self._add_excl_row).grid(row=5, column=0, columnspan=2, sticky="w", pady=2)
 
-        ttk.Label(self, text="Destinazione:").grid(row=7, column=0, sticky="w", pady=2)
+        ttk.Separator(self, orient=tk.HORIZONTAL).grid(row=6, column=0, columnspan=2, sticky="ew", pady=10)
+
+        ttk.Label(self, text="Incrocio Destinazione (Opzionale):", font=("Segoe UI", 9, "bold")).grid(row=7, column=0, columnspan=2, sticky="w")
+        ttk.Label(self, text="Se per soddisfare il requisito serve un incrocio (es. esistere in Volontariato E in Diffusori).").grid(row=8, column=0, columnspan=2, sticky="w", pady=(0, 5))
+
+        ttk.Label(self, text="Destinazione:").grid(row=9, column=0, sticky="w", pady=2)
         self.var_dest_table = tk.StringVar()
         self.cmb_dest_table = ttk.Combobox(self, textvariable=self.var_dest_table, state="readonly", width=30)
-        self.cmb_dest_table.grid(row=7, column=1, sticky="ew", padx=5)
+        self.cmb_dest_table.grid(row=9, column=1, sticky="ew", padx=5)
         if self.db and self.db.connected: self.cmb_dest_table["values"] = self.db.tables
         
         frm_keys = ttk.Frame(self)
-        frm_keys.grid(row=8, column=0, columnspan=2, sticky="ew", pady=5)
+        frm_keys.grid(row=10, column=0, columnspan=2, sticky="ew", pady=5)
         ttk.Label(frm_keys, text="Collega Tab Sorgente (").pack(side=tk.LEFT)
         self.var_link_src = tk.StringVar()
         self.cmb_link_src = ttk.Combobox(frm_keys, textvariable=self.var_link_src, width=15)
@@ -2277,8 +2284,13 @@ class MandatoryRecordBuilder(ttk.Frame):
 
         self._dest_filter_rows = []
         self._frm_dest_filters = ttk.Frame(self)
-        self._frm_dest_filters.grid(row=9, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
-        ttk.Button(self, text="+ Filtro Tab Destinazione", command=self._add_dest_filter_row).grid(row=10, column=0, columnspan=2, sticky="w", pady=5)
+        self._frm_dest_filters.grid(row=11, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
+        ttk.Button(self, text="+ Filtro Tab Destinazione", command=self._add_dest_filter_row).grid(row=12, column=0, columnspan=2, sticky="w", pady=5)
+
+        self._dest_excl_rows = []
+        self._frm_dest_excl = ttk.Frame(self)
+        self._frm_dest_excl.grid(row=13, column=0, columnspan=2, sticky="ew", padx=10)
+        ttk.Button(self, text="+ Esclusione Tab Destinazione", command=self._add_dest_excl_row).grid(row=14, column=0, columnspan=2, sticky="w", pady=2)
 
         self.cmb_table.bind("<<ComboboxSelected>>", self._on_table_sel)
         self.cmb_dest_table.bind("<<ComboboxSelected>>", self._on_dest_table_sel)
@@ -2289,6 +2301,7 @@ class MandatoryRecordBuilder(ttk.Frame):
             cols = self.db.columns(t)
             self.cmb_link_src["values"] = cols
             for row in self._filter_rows: row["cmb_col"]["values"] = cols
+            for row in self._excl_rows: row["cmb_col"]["values"] = cols
             if self.on_table_change: self.on_table_change(t)
             
     def _on_dest_table_sel(self, _evt=None):
@@ -2297,8 +2310,9 @@ class MandatoryRecordBuilder(ttk.Frame):
             cols = self.db.columns(t)
             self.cmb_link_dest["values"] = cols
             for row in self._dest_filter_rows: row["cmb_col"]["values"] = cols
+            for row in self._dest_excl_rows: row["cmb_col"]["values"] = cols
 
-    def _add_filter_row(self, col="", op="=", val="", target_list=None, parent_frame=None, table_var=None):
+    def _add_filter_row(self, col="", op="=", val="", target_list=None, parent_frame=None, table_var=None, label="FILTRO"):
         if target_list is None:
             target_list = self._filter_rows
             parent_frame = self._frm_filters
@@ -2311,7 +2325,7 @@ class MandatoryRecordBuilder(ttk.Frame):
         if target_list:
             ttk.Combobox(frm, textvariable=logic_var, values=constants.LOGIC_OPS, state="readonly", width=5).pack(side=tk.LEFT, padx=2)
         else:
-            ttk.Label(frm, text="FILTRO", width=7).pack(side=tk.LEFT, padx=2)
+            ttk.Label(frm, text=label, width=7).pack(side=tk.LEFT, padx=2)
         var_col = tk.StringVar(value=col)
         cmb_col = ttk.Combobox(frm, textvariable=var_col, values=cols_list, width=18)
         cmb_col.pack(side=tk.LEFT, padx=2)
@@ -2325,6 +2339,12 @@ class MandatoryRecordBuilder(ttk.Frame):
 
     def _add_dest_filter_row(self, col="", op="=", val=""):
         self._add_filter_row(col, op, val, self._dest_filter_rows, self._frm_dest_filters, self.var_dest_table)
+
+    def _add_excl_row(self, col="", op="=", val=""):
+        self._add_filter_row(col, op, val, self._excl_rows, self._frm_excl, self.var_table, label="ESCLUDI")
+
+    def _add_dest_excl_row(self, col="", op="=", val=""):
+        self._add_filter_row(col, op, val, self._dest_excl_rows, self._frm_dest_excl, self.var_dest_table, label="ESCLUDI")
 
     def _remove_row(self, r, t_list):
         r["frm"].destroy()
@@ -2353,6 +2373,12 @@ class MandatoryRecordBuilder(ttk.Frame):
             "link_key_dest": self.var_link_dest.get(),
             "dest_conditions": self._parse_rows(self._dest_filter_rows)
         }
+        excl = self._parse_rows(self._excl_rows)
+        if excl:
+            cfg["exclude_conditions"] = excl
+        dest_excl = self._parse_rows(self._dest_excl_rows)
+        if dest_excl:
+            cfg["exclude_dest_conditions"] = dest_excl
         return cfg
 
     def set_config(self, c):
@@ -2365,12 +2391,20 @@ class MandatoryRecordBuilder(ttk.Frame):
         
         for r in list(self._filter_rows): self._remove_row(r, self._filter_rows)
         for r in list(self._dest_filter_rows): self._remove_row(r, self._dest_filter_rows)
+        for r in list(self._excl_rows): self._remove_row(r, self._excl_rows)
+        for r in list(self._dest_excl_rows): self._remove_row(r, self._dest_excl_rows)
         
         for cond in c.get("conditions", []):
             self._add_filter_row(cond["column"], cond["operator"], cond.get("value", ""))
             
         for cond in c.get("dest_conditions", []):
             self._add_dest_filter_row(cond["column"], cond["operator"], cond.get("value", ""))
+
+        for cond in c.get("exclude_conditions", []):
+            self._add_excl_row(cond.get("column", ""), cond.get("operator", "="), cond.get("value", ""))
+
+        for cond in c.get("exclude_dest_conditions", []):
+            self._add_dest_excl_row(cond.get("column", ""), cond.get("operator", "="), cond.get("value", ""))
 
 
 # ======================================================================== #

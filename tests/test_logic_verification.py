@@ -14,7 +14,7 @@ sys.modules.setdefault("pyodbc", types.SimpleNamespace(drivers=lambda: []))
 import ui_components
 from engines import ConditionExecutor
 from monitor_engine import MonitorEngine
-from storage import DatabaseRegistry, GroupStore
+from storage import ConditionStore, DatabaseRegistry, GroupStore
 from app.controllers.app_controller import AppController
 from app.controllers.db_controller import DBController
 from app.controllers.library_controller import LibraryController
@@ -396,6 +396,42 @@ class ConditionExecutorSmokeTests(unittest.TestCase):
         })
         self.assertEqual(result["count"], 1)
 
+    def test_format_validation_smoke(self):
+        db = FakeDB()
+        db.queue_fetch(["ID", "Name"], [[1, "Alice"], [2, "123"]])
+        result = ConditionExecutor(db).run({
+            "type": "format_validation",
+            "table": "People",
+            "conditions": [{"column": "Name", "operator": "REGEXP", "value": r"^[A-Z]+$", "logic": "AND"}],
+            "display_columns": ["ID", "Name"],
+        })
+        # format_validation è mappato su _comparison: restituisce i record che
+        # soddisfano la regex (Name REGEXP ^[A-Z]+$ -> "Alice")
+        self.assertEqual(result["rows"], [[1, "Alice"]])
+
+    def test_mandatory_record_check_with_exclude_dest_conditions(self):
+        db = FakeDB()
+        # Requisito soddisfatto: esiste almeno un record sorgente non escluso
+        # che ha riscontro in dest (con esclusione dest applicata via WHERE).
+        db.queue_fetch(["Expr1000"], [[1]])
+        result = ConditionExecutor(db).run({
+            "type": "mandatory_record_check",
+            "table": "Agenda",
+            "conditions": [{"column": "Week", "operator": "=", "value": "15", "logic": "AND"}],
+            "exclude_conditions": [{"column": "Area", "operator": "=", "value": "TEST", "logic": "OR"}],
+            "dest_table": "Volontari",
+            "link_key_src": "ID",
+            "link_key_dest": "AgendaID",
+            "dest_conditions": [{"column": "Anno", "operator": "=", "value": "2026", "logic": "AND"}],
+            "exclude_dest_conditions": [{"column": "Stato", "operator": "=", "value": "ANN", "logic": "OR"}],
+        })
+        self.assertEqual(result["title"], "Requisito OK")
+        sql = db.fetch_calls[0][0]
+        self.assertIn("t1", sql)
+        self.assertIn("t2", sql)
+        # Le esclusioni destinazione devono figurare nella subquery EXISTS
+        self.assertIn("[Stato]", sql)
+
 
 class AppLogicTests(unittest.TestCase):
     def test_monitor_engine_accepts_conditions_on_start(self):
@@ -727,6 +763,40 @@ class StorageV5Tests(unittest.TestCase):
 
         self.assertTrue(summary["due"])
         self.assertIn("Mensile DA AGG.", summary["label"])
+
+    def test_condition_store_normalize_periodic_review_defaults_cycle_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "conditions.json")
+            store = ConditionStore(path)
+            store.add({
+                "name": "Controllo periodo",
+                "type": "value_comparison",
+                "periodic_review_enabled": True,
+                "periodic_review_cycle": "BOGUS",
+                "periodic_review_note": "  Aggiornare  ",
+                "periodic_review_last_ack": "2026-05-01T09:00:00",
+            })
+            cond = store.items[0]
+            self.assertEqual(cond["periodic_review_cycle"], "monthly")
+            self.assertEqual(cond["periodic_review_note"], "Aggiornare")
+            self.assertEqual(cond["periodic_review_last_ack"], "2026-05-01T09:00:00")
+
+    def test_condition_store_normalize_periodic_review_clears_when_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "conditions.json")
+            store = ConditionStore(path)
+            store.add({
+                "name": "Controllo statico",
+                "type": "value_comparison",
+                "periodic_review_enabled": False,
+                "periodic_review_cycle": "monthly",
+                "periodic_review_note": "Da pulire",
+                "periodic_review_last_ack": "2026-05-01T09:00:00",
+            })
+            cond = store.items[0]
+            self.assertEqual(cond["periodic_review_cycle"], "")
+            self.assertEqual(cond["periodic_review_note"], "")
+            self.assertEqual(cond["periodic_review_last_ack"], "")
 
 
 if __name__ == "__main__":

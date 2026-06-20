@@ -19,7 +19,6 @@ class BuilderView(ttk.Frame):
         self.result_ctrl = result_controller
         self._sections = {}
         self._filtro_widget = None
-        self._esclusioni_widget = None
         self._periodicita_data = None
         self._build_ui()
 
@@ -66,7 +65,6 @@ class BuilderView(ttk.Frame):
 
         self._create_accordion_section("base", "Base", expanded=True)
         self._create_accordion_section("filtri", "Filtri", expanded=False)
-        self._create_accordion_section("esclusioni", "Esclusioni", expanded=False)
         self._create_accordion_section("report", "Colonne Report", expanded=False)
         self._create_accordion_section("periodicita", "Periodicit\u00e0", expanded=False)
 
@@ -170,41 +168,9 @@ class BuilderView(ttk.Frame):
             section["built"] = False
             self._build_section_content("filtri")
             section["built"] = True
-        # Esclusioni
-        logger.info("_sync_accordion_from_builder: filtro_widget=%s, esclusioni_widget=%s, expanded=%s",
-                    self._filtro_widget is not None, self._esclusioni_widget is not None,
-                    self._sections.get("esclusioni", {}).get("expanded"))
-        if self._esclusioni_widget is not None:
-            try:
-                exc_conds = config.get("exclude_conditions", [])
-                self._esclusioni_widget.set_config({
-                    "table": table,
-                    "conditions": [],
-                    "exclude_conditions": exc_conds,
-                })
-                logger.info("_sync_accordion_from_builder: aggiornate %s esclusioni accordion", len(exc_conds))
-            except Exception as e:
-                logger.warning("_sync_accordion_from_builder: aggiornamento esclusioni fallito: %s", e)
-        elif self._sections.get("esclusioni", {}).get("expanded"):
-            # Sezione espansa ma widget perso: ricostruisci
-            section = self._sections["esclusioni"]
-            for w in section["body"].winfo_children():
-                w.destroy()
-            section["built"] = False
-            self._build_section_content("esclusioni")
-            section["built"] = True
-            # Ricarica i dati appena costruiti con il config attuale del builder
-            try:
-                exc_conds = config.get("exclude_conditions", [])
-                if self._esclusioni_widget is not None:
-                    self._esclusioni_widget.set_config({
-                        "table": table,
-                        "conditions": [],
-                        "exclude_conditions": exc_conds,
-                    })
-                    logger.info("_sync_accordion_from_builder: popolate %s esclusioni dopo ricostruzione", len(exc_conds))
-            except Exception as e:
-                logger.warning("_sync_accordion_from_builder: popolamento esclusioni dopo ricostruzione fallito: %s", e)
+        # Nota: le esclusioni sono gestite inline da ogni builder (pulsante
+        # "+ Esclusione" contestuale), quindi non esiste piu' una sezione
+        # accordion dedicata che duplicava quell'UI.
 
     def _toggle_accordion(self, section_id):
         section = self._sections[section_id]
@@ -228,8 +194,6 @@ class BuilderView(ttk.Frame):
             self._build_section_base(body)
         elif section_id == "filtri":
             self._build_section_filtri(body)
-        elif section_id == "esclusioni":
-            self._build_section_esclusioni(body)
         elif section_id == "report":
             self._build_section_report(body)
         elif section_id == "periodicita":
@@ -265,33 +229,6 @@ class BuilderView(ttk.Frame):
             "conditions": conditions,
         })
         self._filtro_widget = filtro
-
-    def _build_section_esclusioni(self, body):
-        if not self.state.active_builder:
-            ttk.Label(body, text="Configura prima la sezione Base.").pack(pady=20)
-            return
-        try:
-            config = self.state.active_builder.get_config()
-        except Exception:
-            ttk.Label(body, text="Questo tipo di controllo non supporta esclusioni.").pack(pady=20)
-            return
-
-        table = config.get("table", "")
-        exclude_conditions = config.get("exclude_conditions", [])
-
-        excl = MultiConditionBuilder(
-            body, self.state.db,
-            on_table_change=self._on_builder_table_change,
-            title="Esclusioni (opzionale)",
-            show_conditions=False,
-        )
-        excl.pack(fill=tk.BOTH, expand=True)
-        excl.set_config({
-            "table": table,
-            "conditions": [],
-            "exclude_conditions": exclude_conditions,
-        })
-        self._esclusioni_widget = excl
 
     def _build_section_report(self, body):
         if hasattr(self, "col_selector"):
@@ -403,20 +340,8 @@ class BuilderView(ttk.Frame):
             except Exception:
                 pass
 
-        if self._esclusioni_widget is not None:
-            try:
-                # Il widget Esclusioni è un MultiConditionBuilder: le esclusioni
-                # possono trovarsi sia nelle righe "conditions" (caricate dal
-                # salvato) sia nelle righe "exclude" (aggiunte col pulsante
-                # "+ Aggiungi esclusione"). Uniamo entrambe per non perdere dati.
-                esclusioni = (self._esclusioni_widget.get_conditions()
-                              + self._esclusioni_widget.get_exclude_conditions())
-                if esclusioni:
-                    config["exclude_conditions"] = esclusioni
-                elif "exclude_conditions" in config:
-                    del config["exclude_conditions"]
-            except Exception:
-                pass
+        # Le esclusioni sono gestite inline da ogni builder (pulsante
+        # "+ Esclusione" contestuale): niente da sincronizzare qui.
 
         if hasattr(self, "_var_periodic_enabled"):
             try:
@@ -725,8 +650,7 @@ class BuilderView(ttk.Frame):
         # Reset dei riferimenti PRIMA di ricostruire, così _build_section_content
         # può assegnare i nuovi widget correttamente
         self._filtro_widget = None
-        self._esclusioni_widget = None
-        for section_id in ("filtri", "esclusioni", "periodicita"):
+        for section_id in ("filtri", "periodicita"):
             section = self._sections.get(section_id)
             if section is None:
                 continue
@@ -755,8 +679,9 @@ class BuilderView(ttk.Frame):
 
         sections_to_expand = []
         if has_conditions:
-            # Espandi sia Filtri che Esclusioni se almeno uno dei due ha dati
-            sections_to_expand.extend(["filtri", "esclusioni"])
+            # Espandi la sezione Filtri se ci sono filtri (le esclusioni sono
+            # gestite inline nel builder, non qui).
+            sections_to_expand.append("filtri")
         if has_periodic:
             sections_to_expand.append("periodicita")
 

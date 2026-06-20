@@ -18,11 +18,19 @@ class ConditionStore:
         normalized = dict(cond)
         normalized["tag"] = str(normalized.get("tag", "") or "").strip()
         normalized["database_label"] = str(normalized.get("database_label", "") or "").strip()
+        # Allineato a LibraryController.prepare_condition_for_storage:
+        # quando il promemoria è disabilitato, azzera tutti i campi correlati;
+        # quando è abilitato con ciclo non valido, defaulted a "monthly".
         normalized["periodic_review_enabled"] = bool(normalized.get("periodic_review_enabled"))
         cycle = str(normalized.get("periodic_review_cycle", "") or "").strip().lower()
-        normalized["periodic_review_cycle"] = cycle if cycle in ("daily", "weekly", "monthly") else ""
-        normalized["periodic_review_note"] = str(normalized.get("periodic_review_note", "") or "").strip()
-        normalized["periodic_review_last_ack"] = str(normalized.get("periodic_review_last_ack", "") or "").strip()
+        if normalized["periodic_review_enabled"]:
+            normalized["periodic_review_cycle"] = cycle if cycle in ("daily", "weekly", "monthly") else "monthly"
+            normalized["periodic_review_note"] = str(normalized.get("periodic_review_note", "") or "").strip()
+            normalized["periodic_review_last_ack"] = str(normalized.get("periodic_review_last_ack", "") or "").strip()
+        else:
+            normalized["periodic_review_cycle"] = ""
+            normalized["periodic_review_note"] = ""
+            normalized["periodic_review_last_ack"] = ""
         return normalized
 
     def _load(self):
