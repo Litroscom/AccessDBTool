@@ -142,7 +142,16 @@ class ResultController:
             right_key = str(vals[rk]).strip() if 0 <= rk < len(vals) else ""
             right_val = str(vals[rv]).strip() if 0 <= rv < len(vals) else ""
             pair_values = f"{left_val} | {right_val}" if left_val and right_val else ""
-            pair_records = f"{key_col}:{left_key} | {key_col}:{right_key}" if key_col and left_key and right_key else ""
+            # pair_records: preferisce la colonna chiave (ID) del builder; se
+            # manca, fallback sui valori key grezzi senza prefisso (cosi' la
+            # modalita' 'coppia di record' non e' silenziosamente vuota quando
+            # key_column non e' impostata nel builder).
+            if key_col and left_key and right_key:
+                pair_records = f"{key_col}:{left_key} | {key_col}:{right_key}"
+            elif left_key and right_key:
+                pair_records = f"{left_key} | {right_key}"
+            else:
+                pair_records = ""
             if pair_values and pair_values.upper() not in seen["pair_values"]:
                 payload["pair_values"].append(pair_values)
                 seen["pair_values"].add(pair_values.upper())
@@ -162,12 +171,23 @@ class ResultController:
         payload = self.extract_similarity_exception_payload(cols, selected_rows, key_col)
         vals = payload.get(mode, [])
         if not vals or builder is None:
+            logger.info(
+                "add_similarity_exceptions: mode=%s key_col=%r rows=%d cols=%s "
+                "-> nessun valore estratto per la modalita'",
+                mode, key_col, len(selected_rows or []), cols,
+            )
             return 0
         if mode in ("pair_values", "pair_records"):
-            return builder.add_exceptions(vals)
-        if hasattr(builder, "add_record_exclusions"):
-            return builder.add_record_exclusions(vals)
-        return builder.add_exceptions(vals, column=key_col or None)
+            cnt = builder.add_exceptions(vals)
+        elif hasattr(builder, "add_record_exclusions"):
+            cnt = builder.add_record_exclusions(vals, column=key_col or None)
+        else:
+            cnt = builder.add_exceptions(vals, column=key_col or None)
+        logger.info(
+            "add_similarity_exceptions: mode=%s key_col=%r vals=%d aggiunte=%d (es. %s)",
+            mode, key_col, len(vals), cnt, vals[:2],
+        )
+        return cnt
 
     def add_exceptions_from_rows(self, cols, selected_rows, builder, target_column=""):
         """Non-fuzzy path: collects one value per selected row into the builder exceptions."""

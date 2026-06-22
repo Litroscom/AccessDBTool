@@ -14,7 +14,15 @@ class DashboardView(ttk.Frame):
         self.library_ctrl = library_controller
         self.batch_ctrl = batch_controller
         self.result_ctrl = result_controller
+        self._on_open_in_builder = None
         self._build_ui()
+
+    def set_open_in_builder_callback(self, callback):
+        """Registra la callback per aprire una condizione nel tab Controlli.
+
+        Usata dal doppio click sulla riga della dashboard. Se non cablata,
+        il doppio click ricade sul comportamento legacy (riesecuzione)."""
+        self._on_open_in_builder = callback
 
     def _build_ui(self):
         filter_bar = ttk.Frame(self, padding=6)
@@ -176,10 +184,15 @@ class DashboardView(ttk.Frame):
             idx = int(sel[0])
             if 0 <= idx < len(self.state.dash_items):
                 cond = self.state.dash_items[idx]
-                if self.batch_ctrl:
+                # Apri la condizione nel tab Controlli (builder) se la callback
+                # e' stata cablata dall'App; altrimenti fallback: riesegue il
+                # controllo, per mantenere un comportamento utile in isolamento.
+                if self._on_open_in_builder:
+                    self._on_open_in_builder(cond)
+                elif self.batch_ctrl:
                     self.batch_ctrl.run_selected_dashboard_check(cond)
         except Exception:
-            pass
+            logger.exception("double click dashboard fallito")
 
     def _run_selected(self):
         sel = self.dash_tree.selection()

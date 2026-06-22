@@ -289,6 +289,20 @@ class ResultsView(ttk.Frame):
         if self._builder_live():
             builder = self.state.active_builder
             key_col = builder.get_exception_column() if hasattr(builder, "get_exception_column") else ""
+            # Per le modalita' 'record' (sinistro/destro) serve la colonna
+            # chiave (ID) del builder, non la colonna confrontata (nome):
+            # se key_column non e' impostata, l'ID verrebbe scritto come
+            # esclusione sulla colonna nome, che e' semantically errato.
+            if mode in ("left_records", "right_records") and hasattr(builder, "var_key"):
+                key_col = builder.var_key.get().strip() or key_col
+                if not builder.var_key.get().strip():
+                    messagebox.showwarning(
+                        "Colonna chiave mancante",
+                        "Per escludere record per ID (modalita' sinistro/destro) "
+                        "imposta la 'Colonna chiave (ID)' nel builder, oppure "
+                        "usa 'Escludi coppia per sempre (valori)'.",
+                    )
+                    return
             cnt = self.result_ctrl.add_similarity_exceptions(mode, cols, rows, key_col, builder)
             return self._notify_exclusions(cnt)
         self._route_exclusion_to_builder({
@@ -314,9 +328,18 @@ class ResultsView(ttk.Frame):
 
     def _notify_exclusions(self, cnt):
         if cnt > 0:
-            messagebox.showinfo("OK", f"Aggiunte {cnt} esclusioni al costruttore.")
+            messagebox.showinfo("OK", f"Aggiunte {cnt} esclusioni al costruttore.\n"
+                                     "Premi 'Aggiorna Salvata' per renderle permanenti.")
         else:
-            messagebox.showinfo("Info", "Tutti i valori erano già presenti o nessun valore valido.")
+            messagebox.showinfo(
+                "Nessuna esclusione aggiunta",
+                "Tutti i valori selezionati erano gia' presenti tra le esclusioni, "
+                "oppure nessun valore valido e' stato estratto dalla selezione.\n\n"
+                "Suggerimenti:\n"
+                "- per i record (sinistro/destro): imposta la 'Colonna chiave (ID)' nel builder;\n"
+                "- per le coppie (valori/record): seleziona righe che mostrino entrambi i lati;\n"
+                "- controlla il file app.log per il dettaglio tecnico della modalita' usata.",
+            )
 
     def _add_to_exclusions(self):
         res = self.state.current_result

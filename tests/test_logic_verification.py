@@ -578,6 +578,19 @@ class AppLogicTests(unittest.TestCase):
         self.assertEqual(builder.record_calls[0][0], ["10"])
         self.assertEqual(builder.record_calls[1][0], ["20"])
 
+    def test_similarity_pair_records_fallback_without_key_col(self):
+        """Se key_column non e' impostata nel builder, pair_records deve comunque
+        produrre una coppia di record valida (ID grezzi senza prefisso) invece
+        di una lista vuota silenziosa."""
+        builder = DummyBuilder()
+        ctrl = ResultController(SimpleNamespace(current_result=None, active_ctype="similarity_check"))
+        cols = ["ID_1", "Name_1", "ID_2", "Name_2", "Sim%"]
+        rows = [[10, "Mario", 20, "Marco", "88.0"]]
+        payload = ctrl.extract_similarity_exception_payload(cols, rows, key_col="")
+        self.assertEqual(payload["pair_records"], ["10 | 20"])
+        # pair_values non e' influenzato dal key_col
+        self.assertEqual(payload["pair_values"], ["Mario | Marco"])
+
     def test_similarity_builder_record_exclusions_use_or_after_first(self):
         class FakeSimilarityBuilder:
             def __init__(self):

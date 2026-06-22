@@ -284,6 +284,48 @@ class AppBuilderIntegrationTests(unittest.TestCase):
         # I filtri della sezione accordion devono essere sincronizzati
         self.assertTrue(any(c["column"] == "Citta" for c in cfg.get("conditions", [])))
 
+    def test_dashboard_double_click_opens_builder_not_rerun(self):
+        """Doppio click su riga dashboard deve aprire la condizione nel
+        tab Controlli (builder), NON rieseguire il controllo."""
+        app = self.app
+        app._switch_tab("dashboard")
+        dash = app.current_view
+        self.assertIsNotNone(dash)
+        # La callback open_in_builder deve essere cablata da _wire_view_callbacks
+        self.assertIsNotNone(dash._on_open_in_builder)
+
+        cond = {
+            "type": "similarity_check", "name": "QA DblClick", "table": "Clienti",
+            "column": "Nome", "key_column": "ID", "threshold": 80,
+        }
+        # Popola la tree via mock library_ctrl (evita di toccare lo store reale)
+        dash.library_ctrl = SimpleNamespace(
+            get_dashboard_items=lambda tag: [cond],
+            all_condition_tags=lambda: [],
+        )
+        dash._refresh()
+        dash.dash_tree.selection_set("0")
+        dash.dash_tree.focus("0")
+
+        called = {"open": False, "run": False}
+        original_open = dash._on_open_in_builder
+        def fake_open(c, pending=None):
+            called["open"] = True
+            original_open(c)
+        dash._on_open_in_builder = fake_open
+        if dash.batch_ctrl is not None:
+            dash.batch_ctrl.run_selected_dashboard_check = lambda c: called.__setitem__("run", True)
+        try:
+            dash._on_double_click(None)
+        finally:
+            dash._on_open_in_builder = original_open
+
+        self.assertTrue(called["open"], "double click non ha invocato open_in_builder")
+        self.assertFalse(called["run"], "double click ha rieseguito il controllo (comportamento legacy)")
+        # Dopo l'apertura: tab Controlli attivo e condizione caricata nel builder
+        self.assertEqual(app.state.active_ctype, "similarity_check")
+        self.assertIsNotNone(app.state.active_builder)
+
     def test_mandatory_builder_inline_exclusions_round_trip(self):
         cond = {
             "type": "mandatory_record_check",
