@@ -80,6 +80,14 @@ class LibraryController:
         name = self.state.var_saved.get()
         idx = self.state.loaded_condition_idx
         if idx is None or idx < 0:
+            # Non silenziare mai: l'utente deve sapere che l'aggiornamento
+            # non e' avvenuto (es. condizione aperta da dashboard senza match).
+            messagebox.showwarning(
+                "Aggiorna salvata",
+                "Nessuna condizione di libreria caricata da aggiornare.\n"
+                "Apri la condizione dalla libreria (menu a tendina) o usa \n"
+                "\"Salva\" per crearne una nuova.",
+            )
             return
         desc = self.state.store.items[idx].get("description", "")
         tag = self.state.store.items[idx].get("tag", "")
@@ -171,8 +179,13 @@ class LibraryController:
             self.state.var_ctype.set(ctype_label)
         self.state.var_saved.set(cond.get("name", ""))
         self.state.loaded_condition_idx = None
+        # 'cond' può essere una copia proveniente dalla dashboard
+        # (get_dashboard_items aggiunge la chiave '_group_name'), quindi il
+        # match per identità/uguaglianza fallirebbe. Usiamo il nome come
+        # chiave stabile (univoca in libreria, vedi bug #18).
+        cond_name = str(cond.get("name", "") or "").strip()
         for i, c in enumerate(self.state.store.items):
-            if c is cond or c == cond:
+            if c is cond or (cond_name and str(c.get("name", "") or "").strip() == cond_name):
                 self.state.loaded_condition_idx = i
                 break
         tag = cond.get("tag", "").strip()
