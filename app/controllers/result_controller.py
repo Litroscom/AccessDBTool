@@ -142,14 +142,21 @@ class ResultController:
             right_key = str(vals[rk]).strip() if 0 <= rk < len(vals) else ""
             right_val = str(vals[rv]).strip() if 0 <= rv < len(vals) else ""
             pair_values = f"{left_val} | {right_val}" if left_val and right_val else ""
-            # pair_records: preferisce la colonna chiave (ID) del builder; se
-            # manca, fallback sui valori key grezzi senza prefisso (cosi' la
-            # modalita' 'coppia di record' non e' silenziosamente vuota quando
-            # key_column non e' impostata nel builder).
-            if key_col and left_key and right_key:
-                pair_records = f"{key_col}:{left_key} | {key_col}:{right_key}"
-            elif left_key and right_key:
-                pair_records = f"{left_key} | {right_key}"
+            # pair_records identifica una coppia di RECORD per chiave (ID), non
+            # per valore: DEVE sempre avere il prefisso "colonna:" cosi' che
+            # find_similar la classifichi come coppia di chiavi (exc_key_pairs)
+            # e non come coppia di valori (exc_pairs) confrontata coi nomi.
+            # Un fallback senza prefisso (es. "10 | 20") verrebbe trattato come
+            # coppia di valori e non escluderebbe mai i record (bug #26).
+            # Se il builder non passa key_col (es. esclusione catturata dalla
+            # dashboard, builder non ancora vivo) ricaviamo il nome della
+            # colonna chiave dall'intestazione del risultato ("ID_1" -> "ID").
+            key_label = key_col
+            if not key_label and 0 <= lk < len(cols):
+                head = str(cols[lk])
+                key_label = head[:-2] if head.endswith("_1") else head
+            if key_label and left_key and right_key:
+                pair_records = f"{key_label}:{left_key} | {key_label}:{right_key}"
             else:
                 pair_records = ""
             if pair_values and pair_values.upper() not in seen["pair_values"]:

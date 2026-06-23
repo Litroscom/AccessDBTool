@@ -579,17 +579,36 @@ class AppLogicTests(unittest.TestCase):
         self.assertEqual(builder.record_calls[1][0], ["20"])
 
     def test_similarity_pair_records_fallback_without_key_col(self):
-        """Se key_column non e' impostata nel builder, pair_records deve comunque
-        produrre una coppia di record valida (ID grezzi senza prefisso) invece
-        di una lista vuota silenziosa."""
+        """Senza key_col esplicito (path dashboard) pair_records deve comunque
+        produrre una coppia di RECORD valida: ricava il nome colonna chiave
+        dall'intestazione del risultato ('ID_1' -> 'ID') e usa il prefisso
+        'ID:' cosi' la coppia e' riconosciuta come coppia di chiavi, non di
+        valori (bug #26)."""
         builder = DummyBuilder()
         ctrl = ResultController(SimpleNamespace(current_result=None, active_ctype="similarity_check"))
         cols = ["ID_1", "Name_1", "ID_2", "Name_2", "Sim%"]
         rows = [[10, "Mario", 20, "Marco", "88.0"]]
         payload = ctrl.extract_similarity_exception_payload(cols, rows, key_col="")
-        self.assertEqual(payload["pair_records"], ["10 | 20"])
+        self.assertEqual(payload["pair_records"], ["ID:10 | ID:20"])
         # pair_values non e' influenzato dal key_col
         self.assertEqual(payload["pair_values"], ["Mario | Marco"])
+
+    def test_similarity_pair_records_from_dashboard_actually_excludes(self):
+        """Regressione bug #26: una coppia di record esclusa dalla dashboard
+        (key_col vuoto) deve effettivamente sparire dai risultati alla
+        riesecuzione. Prima il fallback senza prefisso veniva trattato come
+        coppia di valori e non escludeva nulla."""
+        from engines import SimilarityEngine
+        ctrl = ResultController(SimpleNamespace(current_result=None, active_ctype="similarity_check"))
+        cols = ["ID_1", "Name_1", "ID_2", "Name_2", "Sim%"]
+        rows = [["1", "Mario Rossi", "2", "Maria Rossi", "90.9"]]
+        data = [(1, "Mario Rossi"), (2, "Maria Rossi")]
+        # baseline: la coppia c'e'
+        self.assertEqual(len(SimilarityEngine.find_similar(data, threshold=80)), 1)
+        # esclusione catturata dalla dashboard (key_col vuoto)
+        exc = ctrl.extract_similarity_exception_payload(cols, rows, key_col="")["pair_records"]
+        # alla riesecuzione la coppia deve sparire
+        self.assertEqual(len(SimilarityEngine.find_similar(data, threshold=80, exceptions=exc)), 0)
 
     def test_similarity_builder_record_exclusions_use_or_after_first(self):
         class FakeSimilarityBuilder:
