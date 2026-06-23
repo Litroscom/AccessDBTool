@@ -299,6 +299,23 @@ class ConditionExecutorSmokeTests(unittest.TestCase):
         })
         self.assertEqual(result["count"], 1)
 
+    def test_formula_condition_applies_exclude_conditions(self):
+        """Bug #27: formula_condition deve applicare exclude_conditions
+        (record esclusi dal tasto destro/dashboard) come 'AND NOT (...)'."""
+        db = FakeDB()
+        db.queue_fetch(["ID"], [[1]])
+        ConditionExecutor(db).run({
+            "type": "formula_condition",
+            "table": "People",
+            "display_columns": ["ID"],
+            "formula": "[Enabled] = True",
+            "exclude_conditions": [{"column": "ID", "operator": "=", "value": "7", "logic": "AND"}],
+        })
+        sql, params = db.fetch_calls[0]
+        self.assertIn("NOT (", sql)
+        self.assertIn("[ID]", sql)
+        self.assertEqual(params, ["7"])
+
     def test_linked_table_intersection_smoke(self):
         db = FakeDB()
         db.queue_fetch(["ID"], [[1]])

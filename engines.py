@@ -715,11 +715,25 @@ class ConditionExecutor:
         formula = c.get("formula", "").strip()
         if not table or not formula:
             return self._error("Tabella o Formula mancante.")
-            
-        sql = f"SELECT {self._build_select(display_cols)} FROM {_qi(table)} WHERE {formula}"
+
+        # Esclusioni: i record che soddisfano queste condizioni NON vengono
+        # segnalati. Si traducono in "AND NOT (...)" sulla WHERE della formula.
+        where = f"({formula})"
+        params = []
+        exclude_conditions = c.get("exclude_conditions", [])
+        if exclude_conditions:
+            excl_clause, excl_params = self._build_condition_clause([], exclude_conditions)
+            if excl_clause:
+                where += " AND " + excl_clause
+                params.extend(excl_params)
+
+        sql = f"SELECT {self._build_select(display_cols)} FROM {_qi(table)} WHERE {where}"
         try:
-            cols, rows = self.db.fetch(sql)
-            return self._result(f"Formula: {table}", f"WHERE {formula}", cols, rows, table)
+            cols, rows = self.db.fetch(sql, params if params else None)
+            desc = f"WHERE {formula}"
+            if exclude_conditions:
+                desc += " | escl: " + self._describe_conditions(exclude_conditions)
+            return self._result(f"Formula: {table}", desc, cols, rows, table)
         except Exception as e:
             msg = f"Errore nella formula SQL: {e}\n\nQuery: {sql}"
             logger.error(msg)

@@ -1398,6 +1398,20 @@ class FormulaBuilder(ttk.Frame):
         self.lbl_formula_check = ttk.Label(actions, text="Controlla la sintassi prima di eseguire.", foreground="gray")
         self.lbl_formula_check.pack(side=tk.LEFT, padx=10)
 
+        # --- Esclusioni record (falsi positivi) ---
+        # I record che soddisfano queste condizioni non vengono segnalati.
+        # Alimentate anche dal tasto destro "Aggiungi a Esclusioni" sui risultati.
+        excl_frm = ttk.LabelFrame(self, text="Esclusioni record (falsi positivi)", padding=6)
+        excl_frm.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(excl_frm,
+                  text="I record che soddisfano queste condizioni NON saranno segnalati.",
+                  foreground="gray").pack(anchor=tk.W)
+        self._frm_excl_rows = ttk.Frame(excl_frm)
+        self._frm_excl_rows.pack(fill=tk.X, pady=2)
+        self._excl_rows = []
+        ttk.Button(excl_frm, text="+ Esclusione",
+                   command=lambda: self._add_excl_row()).pack(anchor=tk.W, pady=2)
+
     def _on_table_sel(self, _evt=None):
         t = self.var_table.get()
         if t and self.db:
@@ -1443,17 +1457,108 @@ class FormulaBuilder(ttk.Frame):
             messagebox.showerror("Verifica SQL", f"{msg}\n\nQuery testata:\n{sql}")
             return False
 
+    def _default_exclusion_column(self):
+        cols = self.db.columns(self.var_table.get()) if (self.db and self.var_table.get()) else []
+        for name in ("ID", "Id", "id", "Codice", "Code", "Key", "Chiave"):
+            if name in cols:
+                return name
+        return cols[0] if cols else ""
+
+    def get_exception_column(self):
+        return self._default_exclusion_column()
+
+    def _add_excl_row(self, col="", op="=", val=""):
+        frm = ttk.Frame(self._frm_excl_rows)
+        frm.pack(fill=tk.X, pady=1)
+        cols_list = self.db.columns(self.var_table.get()) if (self.db and self.var_table.get()) else []
+        logic_var = tk.StringVar(value="AND")
+        if self._excl_rows:
+            ttk.Combobox(frm, textvariable=logic_var, values=constants.LOGIC_OPS,
+                         state="readonly", width=5).pack(side=tk.LEFT, padx=2)
+        else:
+            ttk.Label(frm, text="ESCLUDI", width=7).pack(side=tk.LEFT, padx=2)
+        var_col = tk.StringVar(value=col)
+        ttk.Combobox(frm, textvariable=var_col, values=cols_list, width=18).pack(side=tk.LEFT, padx=2)
+        var_op = tk.StringVar()
+        ops = [k + "  (" + v + ")" for k, v in constants.OPERATORS.items()]
+        var_op.set(op + "  (" + constants.OPERATORS.get(op, "") + ")" if op in constants.OPERATORS else op)
+        ttk.Combobox(frm, textvariable=var_op, values=ops, state="readonly", width=22).pack(side=tk.LEFT, padx=2)
+        var_val = tk.StringVar(value=val)
+        ttk.Entry(frm, textvariable=var_val, width=18).pack(side=tk.LEFT, padx=2)
+        row_dict = {"frm": frm, "logic": logic_var, "col": var_col, "op": var_op, "val": var_val}
+        ttk.Button(frm, text="✕", width=2,
+                   command=lambda r=row_dict: self._remove_excl_row(r)).pack(side=tk.LEFT)
+        self._excl_rows.append(row_dict)
+
+    def _remove_excl_row(self, row_dict):
+        row_dict["frm"].destroy()
+        self._excl_rows.remove(row_dict)
+
+    def get_exclude_conditions(self):
+        result = []
+        for row in self._excl_rows:
+            c = row["col"].get().strip()
+            op = row["op"].get().split("  (")[0].strip()
+            v = row["val"].get()
+            logic = row["logic"].get()
+            if c and op:
+                result.append({"column": c, "operator": op, "value": v, "logic": logic})
+        return result
+
+    def set_exclude_conditions(self, conditions):
+        for row in list(self._excl_rows):
+            self._remove_excl_row(row)
+        for cond in conditions or []:
+            self._add_excl_row(
+                col=cond.get("column", ""),
+                op=cond.get("operator", "="),
+                val=str(cond.get("value", "")),
+            )
+            logic = (cond.get("logic") or "AND").upper()
+            if len(self._excl_rows) > 1 and logic not in constants.LOGIC_OPS:
+                logic = "OR"
+            self._excl_rows[-1]["logic"].set(logic)
+
+    def add_exceptions(self, values, column=None):
+        column = column or self._default_exclusion_column()
+        if not column:
+            return 0
+        existing = {
+            (cond.get("column", "").upper(), cond.get("operator", "").upper(),
+             str(cond.get("value", "")).strip().upper())
+            for cond in self.get_exclude_conditions()
+        }
+        count = 0
+        for value in values:
+            sval = str(value).strip()
+            if not sval:
+                continue
+            key = (column.upper(), "=", sval.upper())
+            if key in existing:
+                continue
+            self._add_excl_row(col=column, op="=", val=sval)
+            if len(self._excl_rows) > 1:
+                self._excl_rows[-1]["logic"].set("OR")
+            existing.add(key)
+            count += 1
+        return count
+
     def get_config(self):
-        return {
+        cfg = {
             "table": self.var_table.get(),
             "formula": self.txt.get("1.0", tk.END).strip()
         }
+        excl = self.get_exclude_conditions()
+        if excl:
+            cfg["exclude_conditions"] = excl
+        return cfg
 
     def set_config(self, c):
         self.var_table.set(c.get("table") or c.get("source_table", ""))
         self._on_table_sel()
         self.txt.delete("1.0", tk.END)
         self.txt.insert("1.0", c.get("formula", ""))
+        self.set_exclude_conditions(c.get("exclude_conditions", []))
         self.lbl_formula_check.config(text="Controlla la sintassi prima di eseguire.", foreground="gray")
 
 
