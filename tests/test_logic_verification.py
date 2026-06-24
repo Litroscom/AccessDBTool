@@ -848,5 +848,74 @@ class StorageV5Tests(unittest.TestCase):
             self.assertEqual(cond["periodic_review_last_ack"], "")
 
 
+class BulkValueReplacementTests(unittest.TestCase):
+    """Sostituzione massiva di valori su condizioni selezionate in libreria (#28)."""
+
+    def test_replaces_value_in_filter_when_column_and_value_match(self):
+        from storage import apply_value_replacement
+        cond = {
+            "name": "Vendite mese",
+            "conditions": [
+                {"column": "mese", "operator": "=", "value": "giu", "logic": "AND"},
+                {"column": "anno", "operator": "=", "value": "2026", "logic": "AND"},
+            ],
+        }
+        new_cond, changes = apply_value_replacement(cond, "mese", "giu", "mag")
+        self.assertEqual(new_cond["conditions"][0]["value"], "mag")
+        self.assertEqual(new_cond["conditions"][1]["value"], "2026")  # invariato
+        self.assertEqual(len(changes), 1)
+
+    def test_does_not_mutate_original(self):
+        from storage import apply_value_replacement
+        cond = {"conditions": [{"column": "mese", "operator": "=", "value": "giu"}]}
+        apply_value_replacement(cond, "mese", "giu", "mag")
+        self.assertEqual(cond["conditions"][0]["value"], "giu")  # originale intatto
+
+    def test_blank_column_matches_value_in_any_column(self):
+        from storage import apply_value_replacement
+        cond = {"conditions": [
+            {"column": "mese", "operator": "=", "value": "giu"},
+            {"column": "periodo", "operator": "=", "value": "giu"},
+        ]}
+        new_cond, changes = apply_value_replacement(cond, "", "giu", "mag")
+        self.assertEqual([r["value"] for r in new_cond["conditions"]], ["mag", "mag"])
+        self.assertEqual(len(changes), 2)
+
+    def test_replaces_in_exclude_conditions_too(self):
+        from storage import apply_value_replacement
+        cond = {"exclude_conditions": [{"column": "mese", "operator": "=", "value": "giu"}]}
+        new_cond, changes = apply_value_replacement(cond, "mese", "giu", "mag")
+        self.assertEqual(new_cond["exclude_conditions"][0]["value"], "mag")
+        self.assertEqual(len(changes), 1)
+
+    def test_value_match_is_case_insensitive_and_trimmed(self):
+        from storage import apply_value_replacement
+        cond = {"conditions": [{"column": "Mese", "operator": "=", "value": " GIU "}]}
+        new_cond, changes = apply_value_replacement(cond, "mese", "giu", "mag")
+        self.assertEqual(new_cond["conditions"][0]["value"], "mag")
+        self.assertEqual(len(changes), 1)
+
+    def test_no_match_returns_empty_changes(self):
+        from storage import apply_value_replacement
+        cond = {"conditions": [{"column": "mese", "operator": "=", "value": "lug"}]}
+        new_cond, changes = apply_value_replacement(cond, "mese", "giu", "mag")
+        self.assertEqual(changes, [])
+        self.assertEqual(new_cond["conditions"][0]["value"], "lug")
+
+    def test_replaces_quoted_literal_in_formula_when_column_present(self):
+        from storage import apply_value_replacement
+        cond = {"type": "formula_condition", "formula": "[mese] = 'giu' AND [stato] = 'OK'"}
+        new_cond, changes = apply_value_replacement(cond, "mese", "giu", "mag")
+        self.assertEqual(new_cond["formula"], "[mese] = 'mag' AND [stato] = 'OK'")
+        self.assertEqual(len(changes), 1)
+
+    def test_does_not_touch_formula_when_column_absent(self):
+        from storage import apply_value_replacement
+        cond = {"type": "formula_condition", "formula": "[stato] = 'giu'"}
+        new_cond, changes = apply_value_replacement(cond, "mese", "giu", "mag")
+        self.assertEqual(new_cond["formula"], "[stato] = 'giu'")
+        self.assertEqual(changes, [])
+
+
 if __name__ == "__main__":
     unittest.main()

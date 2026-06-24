@@ -345,5 +345,46 @@ class AppBuilderIntegrationTests(unittest.TestCase):
         self.assertEqual(cfg.get("exclude_dest_conditions")[0]["value"], "ANN")
 
 
+class ConditionManagerBulkReplaceTests(unittest.TestCase):
+    """Sostituzione massiva valori dal 'Gestione Condizioni' (#28), headless:
+    esercita plan+apply senza i dialog interattivi."""
+
+    def setUp(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+
+    def tearDown(self):
+        self.root.destroy()
+
+    def test_plan_and_apply_replaces_across_selected_conditions(self):
+        from views.condition_manager_view import ConditionManagerDialog
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ConditionStore(os.path.join(tmp, "conditions.json"))
+            store.add({"name": "A", "type": "value_comparison", "table": "T",
+                       "conditions": [{"column": "mese", "operator": "=", "value": "giu", "logic": "AND"}]})
+            store.add({"name": "B", "type": "formula_condition", "table": "T",
+                       "formula": "[mese] = 'giu'"})
+            store.add({"name": "C", "type": "value_comparison", "table": "T",
+                       "conditions": [{"column": "mese", "operator": "=", "value": "lug", "logic": "AND"}]})
+
+            refreshed = {"n": 0}
+            dlg = ConditionManagerDialog(self.root, store, lambda: refreshed.__setitem__("n", refreshed["n"] + 1), lambda c: None)
+            try:
+                indices = [0, 1, 2]
+                plan = dlg._plan_replacement(indices, "mese", "giu", "mag")
+                # solo A e B hanno 'giu' -> 2 condizioni nel piano
+                self.assertEqual(len(plan), 2)
+                applied = dlg._apply_replacement(plan)
+                self.assertEqual(applied, 2)
+                self.assertEqual(store.items[0]["conditions"][0]["value"], "mag")
+                self.assertEqual(store.items[1]["formula"], "[mese] = 'mag'")
+                self.assertEqual(store.items[2]["conditions"][0]["value"], "lug")  # invariato
+                # persistito su disco
+                reloaded = ConditionStore(os.path.join(tmp, "conditions.json"))
+                self.assertEqual(reloaded.items[0]["conditions"][0]["value"], "mag")
+            finally:
+                dlg.destroy()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox
 import logging
 
 import constants
+from storage import apply_value_replacement
 
 logger = logging.getLogger("AccessDBTool.ConditionManagerView")
 
@@ -114,6 +115,8 @@ class ConditionManagerDialog(tk.Toplevel):
         ttk.Button(action_frame, text="🗑 Elimina", command=self._delete,
                    bootstyle="danger").pack(side=tk.LEFT, padx=2)
         ttk.Button(action_frame, text="🏷 Assegna tag...", command=self._assign_tag,
+                   bootstyle="secondary").pack(side=tk.LEFT, padx=2)
+        ttk.Button(action_frame, text="🔁 Sostituisci valori...", command=self._bulk_replace_values,
                    bootstyle="secondary").pack(side=tk.LEFT, padx=2)
 
         footer = ttk.Frame(self, padding=6)
@@ -252,6 +255,67 @@ class ConditionManagerDialog(tk.Toplevel):
         self._populate()
         self.on_refresh()
 
+    def _plan_replacement(self, indices, column, old_value, new_value):
+        """Calcola le modifiche (senza applicarle) sulle condizioni indicate.
+        Ritorna lista di (store_idx, nuova_cond, changes) per le sole
+        condizioni con almeno una sostituzione."""
+        plan = []
+        for i in indices:
+            new_cond, changes = apply_value_replacement(
+                self.store.items[i], column, old_value, new_value)
+            if changes:
+                plan.append((i, new_cond, changes))
+        return plan
+
+    def _apply_replacement(self, plan):
+        """Applica un piano di sostituzione e salva. Ritorna il numero totale
+        di valori sostituiti."""
+        for i, new_cond, _changes in plan:
+            self.store.items[i] = new_cond
+        if plan:
+            self.store._save()
+        return sum(len(changes) for _i, _c, changes in plan)
+
+    def _bulk_replace_values(self):
+        indices = self._selected_store_indices()
+        if not indices:
+            messagebox.showwarning("Attenzione", "Seleziona almeno una condizione.")
+            return
+        dlg = BulkReplaceDialog(self, len(indices))
+        if not dlg.result:
+            return
+        column = dlg.result["column"]
+        old_value = dlg.result["old"]
+        new_value = dlg.result["new"]
+        plan = self._plan_replacement(indices, column, old_value, new_value)
+        if not plan:
+            scope = f"colonna '{column}', " if column else ""
+            messagebox.showinfo(
+                "Nessuna corrispondenza",
+                f"Nessun valore '{old_value}' ({scope}su {len(indices)} condizioni) "
+                "da sostituire.",
+            )
+            return
+        total = sum(len(changes) for _i, _c, changes in plan)
+        lines = []
+        for _i, _c, changes in plan:
+            for ch in changes:
+                where = ch["where"]
+                col = ch["column"] or "(qualsiasi)"
+                lines.append(f"• {ch['name']}: [{col}] '{ch['old']}' → '{ch['new']}' ({where})")
+        preview = "\n".join(lines[:25])
+        if len(lines) > 25:
+            preview += f"\n… e altre {len(lines) - 25}"
+        if not messagebox.askyesno(
+            "Conferma sostituzione",
+            f"{total} sostituzioni in {len(plan)} condizioni:\n\n{preview}\n\nProcedere?",
+        ):
+            return
+        applied = self._apply_replacement(plan)
+        self._populate()
+        self.on_refresh()
+        messagebox.showinfo("OK", f"{applied} valori sostituiti in {len(plan)} condizioni.")
+
     def _selected_store_indices(self):
         selected = []
         for iid in self.list_tree.selection():
@@ -275,3 +339,58 @@ class ConditionManagerDialog(tk.Toplevel):
         if hasattr(self.parent, "_import_conditions"):
             self.parent._import_conditions()
             self._populate()
+
+
+class BulkReplaceDialog(tk.Toplevel):
+    """Input per la sostituzione massiva: colonna (opzionale), valore attuale,
+    nuovo valore. Imposta self.result = {column, old, new} su conferma."""
+
+    def __init__(self, parent, n_selected):
+        super().__init__(parent)
+        self.result = None
+        self.title("Sostituisci valori")
+        self.resizable(False, False)
+        self.transient(parent)
+
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            frm,
+            text=f"Sostituzione su {n_selected} condizioni selezionate.",
+            font=("", 9, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        self.var_col = tk.StringVar()
+        self.var_old = tk.StringVar()
+        self.var_new = tk.StringVar()
+        for r, (label, var) in enumerate([
+            ("Colonna (vuoto = qualsiasi):", self.var_col),
+            ("Valore attuale:", self.var_old),
+            ("Nuovo valore:", self.var_new),
+        ], start=1):
+            ttk.Label(frm, text=label).grid(row=r, column=0, sticky="w", pady=3, padx=2)
+            ttk.Entry(frm, textvariable=var, width=24).grid(row=r, column=1, pady=3, padx=2)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=4, column=0, columnspan=2, pady=(10, 0), sticky="e")
+        ttk.Button(btns, text="Annulla", command=self.destroy,
+                   bootstyle="secondary").pack(side=tk.RIGHT, padx=2)
+        ttk.Button(btns, text="Anteprima…", command=self._confirm,
+                   bootstyle="primary").pack(side=tk.RIGHT, padx=2)
+
+        self.bind("<Return>", lambda _e: self._confirm())
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+        self.wait_window(self)
+
+    def _confirm(self):
+        old = self.var_old.get().strip()
+        if not old:
+            messagebox.showwarning("Attenzione", "Inserire il valore attuale da sostituire.", parent=self)
+            return
+        self.result = {
+            "column": self.var_col.get().strip(),
+            "old": old,
+            "new": self.var_new.get().strip(),
+        }
+        self.destroy()

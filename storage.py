@@ -1,10 +1,71 @@
 import json
 import os
+import re
+import copy
 import logging
 from tkinter import messagebox
 import constants
 
 logger = logging.getLogger("AccessDBTool.Storage")
+
+
+def _eq(a, b):
+    """Confronto valore tollerante: trimmed e case-insensitive."""
+    return str(a).strip().lower() == str(b).strip().lower()
+
+
+def apply_value_replacement(cond, column, old_value, new_value):
+    """Sostituzione massiva di un valore in una condizione di libreria.
+
+    Ritorna (nuova_cond, changes). Pure: lavora su una copia profonda e non
+    muta l'originale. 'changes' e' la lista delle modifiche per l'anteprima:
+    ogni elemento e' un dict {name, where, column, old, new}.
+
+    - Scorre OGNI lista di condizioni (qualsiasi lista di dict con chiave
+      'value': conditions, exclude_conditions, dest_conditions, antecedent...):
+      se la colonna combacia (o 'column' e' vuota = qualsiasi colonna) E il
+      valore e' uguale a old_value (trimmed, case-insensitive) -> imposta new.
+    - Testo 'formula' (formula_condition): se 'column' e' indicata agisce solo
+      quando la colonna compare nella formula; sostituisce il letterale tra
+      apici 'old_value' -> 'new_value'.
+    """
+    new_cond = copy.deepcopy(cond)
+    changes = []
+    name = str(new_cond.get("name", "") or "?")
+    col_target = str(column or "").strip()
+
+    for key, val in new_cond.items():
+        if not isinstance(val, list):
+            continue
+        for elem in val:
+            if not isinstance(elem, dict) or "value" not in elem:
+                continue
+            if col_target and not _eq(elem.get("column", ""), col_target):
+                continue
+            if _eq(elem.get("value", ""), old_value):
+                elem["value"] = new_value
+                changes.append({
+                    "name": name, "where": key,
+                    "column": elem.get("column", ""),
+                    "old": old_value, "new": new_value,
+                })
+
+    formula = new_cond.get("formula")
+    if isinstance(formula, str) and formula.strip():
+        column_present = (not col_target) or bool(
+            re.search(r"\b" + re.escape(col_target) + r"\b", formula, re.IGNORECASE)
+        )
+        if column_present:
+            pattern = re.compile(r"'" + re.escape(str(old_value)) + r"'", re.IGNORECASE)
+            replaced, n = pattern.subn("'" + str(new_value) + "'", formula)
+            if n:
+                new_cond["formula"] = replaced
+                changes.append({
+                    "name": name, "where": "formula",
+                    "column": col_target, "old": old_value, "new": new_value,
+                })
+
+    return new_cond, changes
 
 class ConditionStore:
     def __init__(self, path=constants.CONDITIONS_FILE):
