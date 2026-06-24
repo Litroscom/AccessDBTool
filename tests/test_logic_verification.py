@@ -986,6 +986,27 @@ class SafeSingleRecordUpdateTests(unittest.TestCase):
         self.assertNotIn("[Calcolato]", set_part)   # colonna non reale esclusa
         self.assertEqual(params, ["X", 5])
 
+    def test_set_matches_columns_case_insensitively_using_canonical_name(self):
+        # Access e' case-insensitive sui nomi colonna: una colonna del risultato
+        # con maiuscole/minuscole diverse da db.columns deve comunque essere
+        # aggiornata, usando il nome canonico della tabella (bug #32).
+        db = self._db(count=1)
+        db.table_columns = {"Clienti": [{"name": "ID"}, {"name": "Nome"}]}
+        db.update_record_safe("Clienti", {"ID": 5}, {"ID": 5, "nome": "X"})  # 'nome' minuscolo
+        sql, params = db.conn.cur.updates[0]
+        set_part = sql.split("WHERE")[0]
+        self.assertIn("[Nome] = ?", set_part)       # nome canonico, non "[nome]"
+        self.assertEqual(params, ["X", 5])
+
+    def test_key_excluded_from_set_case_insensitively(self):
+        db = self._db(count=1)
+        db.table_columns = {"Clienti": [{"name": "ID"}, {"name": "Nome"}]}
+        # la PK arriva come "id" minuscolo: non deve finire nel SET
+        db.update_record_safe("Clienti", {"id": 5}, {"id": 5, "Nome": "X"})
+        sql, _ = db.conn.cur.updates[0]
+        self.assertNotIn("[id]", sql.split("WHERE")[0])
+        self.assertNotIn("[ID]", sql.split("WHERE")[0])
+
     def test_set_not_filtered_when_table_metadata_unknown(self):
         # Se le colonne della tabella non sono note (lista vuota) non filtriamo:
         # meglio provare che perdere modifiche legittime.

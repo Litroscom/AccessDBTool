@@ -259,18 +259,34 @@ class DatabaseManager:
         # Solo colonne REALI della tabella: una colonna del risultato che non
         # esiste nella tabella (computata, alias, frutto di join) verrebbe
         # interpretata da Access come parametro -> "Parametri insufficienti"
-        # (-3010). Se i metadati colonne non sono noti non filtriamo, per non
+        # (-3010). Il confronto e' case-insensitive (Access non distingue le
+        # maiuscole nei nomi colonna) e usa sempre il nome CANONICO della
+        # tabella. Se i metadati colonne non sono noti non filtriamo, per non
         # perdere modifiche legittime.
-        known_cols = set(self.columns(table))
-        set_cols, set_vals = [], []
+        known_cols = list(self.columns(table))
+        known_map = {str(c).strip().lower(): c for c in known_cols}
+        key_lower = {str(k).strip().lower() for k in key_dict}
+        set_cols, set_vals, skipped = [], [], []
         for k, v in data_dict.items():
-            if k in key_dict:
+            if str(k).strip().lower() in key_lower:
                 continue
-            if known_cols and k not in known_cols:
-                continue
-            set_cols.append(f"{self._qi(k)} = ?")
+            if known_map:
+                canonical = known_map.get(str(k).strip().lower())
+                if canonical is None:
+                    skipped.append(k)
+                    continue
+                col_name = canonical
+            else:
+                col_name = k
+            set_cols.append(f"{self._qi(col_name)} = ?")
             set_vals.append(v)
         if not set_cols:
+            if skipped:
+                logger.warning(
+                    "update_record_safe: nessuna colonna aggiornabile su [%s]; "
+                    "campi ignorati (non colonne reali): %s; colonne tabella: %s",
+                    table, skipped, known_cols,
+                )
             return 0
 
         key_clause = " AND ".join(f"{self._qi(k)} = ?" for k in key_dict)

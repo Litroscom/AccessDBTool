@@ -621,12 +621,16 @@ class RecordEditorDialog(tk.Toplevel):
         # Identifica le colonne chiave che identificano UNIVOCAMENTE il record.
         self.key_cols, self._key_error = self._determine_key_columns()
         self.pk_col = self.key_cols[0] if self.key_cols else None
-        # Colonne reali della tabella: le altre (computate/alias/join) non sono
+        # Colonne reali della tabella (confronto case-insensitive: Access non
+        # distingue le maiuscole). Le altre (computate/alias/join) non sono
         # modificabili e vanno mostrate in sola lettura.
         try:
-            self._table_cols = set(self.db.columns(table)) if hasattr(self.db, "columns") else set()
+            self._table_cols_lower = (
+                {str(c).strip().lower() for c in self.db.columns(table)}
+                if hasattr(self.db, "columns") else set()
+            )
         except Exception:
-            self._table_cols = set()
+            self._table_cols_lower = set()
 
         for k, v in record_data.items():
             f = ttk.Frame(self.scroll_frame)
@@ -641,7 +645,7 @@ class RecordEditorDialog(tk.Toplevel):
             if k in self.key_cols:
                 ent.config(state="readonly")
                 lbl.config(text=k + " (PK)")
-            elif self._table_cols and k not in self._table_cols:
+            elif self._table_cols_lower and str(k).strip().lower() not in self._table_cols_lower:
                 ent.config(state="readonly")
                 lbl.config(text=k + " (non modificabile)")
             else:
@@ -679,6 +683,16 @@ class RecordEditorDialog(tk.Toplevel):
                        f"comunque l'unicita' a runtime.")
         return cols[0]
 
+    def _data_key_ci(self, name):
+        """Trova nel record la chiave che combacia con 'name' senza distinguere
+        maiuscole/minuscole; ritorna la grafia presente nei dati (così
+        self.data[k] funziona) o None."""
+        target = str(name).strip().lower()
+        for k in self.data:
+            if str(k).strip().lower() == target:
+                return k
+        return None
+
     def _determine_key_columns(self):
         """Colonne che identificano univocamente il record da modificare.
         Preferisce la chiave primaria REALE del database; se non e' tra le
@@ -688,7 +702,13 @@ class RecordEditorDialog(tk.Toplevel):
         update_record_safe (UPDATE solo se COUNT==1)."""
         pks = self.db.primary_keys(self.table) if hasattr(self.db, "primary_keys") else []
         if pks:
-            missing = [p for p in pks if p not in self.data]
+            resolved, missing = [], []
+            for p in pks:
+                dk = self._data_key_ci(p)
+                if dk is None:
+                    missing.append(p)
+                else:
+                    resolved.append(dk)
             if missing:
                 return [], (
                     "Chiave primaria mancante",
@@ -697,7 +717,7 @@ class RecordEditorDialog(tk.Toplevel):
                     "Aggiungi questa colonna alle 'colonne da visualizzare' della "
                     "condizione, riesegui il controllo e riprova la modifica.",
                 )
-            return list(pks), None
+            return resolved, None
         guess = self._guess_pk()
         return ([guess] if guess else []), None
 

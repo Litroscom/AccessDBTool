@@ -420,6 +420,21 @@ class RecordEditorDialogTests(unittest.TestCase):
         _t, key_dict, _new = db.calls[0]
         self.assertEqual(key_dict, {"ID": 7})
 
+    def test_pk_resolved_case_insensitively(self):
+        from unittest.mock import patch
+        from ui_components import RecordEditorDialog
+
+        db = self._FakeEditDB(pks=["ID"])      # PK dichiarata "ID"
+        data = {"Id": 5, "Nome": "Mario"}      # ma nel risultato e' "Id"
+        with patch("ui_components.messagebox"):
+            dlg = RecordEditorDialog(self.root, db, "Clienti", data)
+            self.assertEqual(dlg.key_cols, ["Id"])   # risolta alla grafia dei dati
+            dlg.entries["Nome"].delete(0, tk.END)
+            dlg.entries["Nome"].insert(0, "Luigi")
+            dlg._save()
+        _t, key_dict, _new = db.calls[0]
+        self.assertEqual(key_dict, {"Id": 5})
+
     def test_emptied_numeric_field_becomes_null(self):
         from unittest.mock import patch
         from ui_components import RecordEditorDialog
