@@ -848,6 +848,61 @@ class StorageV5Tests(unittest.TestCase):
             self.assertEqual(cond["periodic_review_last_ack"], "")
 
 
+class DirectRecordEditTests(unittest.TestCase):
+    """Verifica modifica diretta di un record dal risultato di una condizione."""
+
+    def test_update_record_builds_parameterized_sql_excluding_pk(self):
+        from db_manager import DatabaseManager
+
+        class FakeCursor:
+            def __init__(self):
+                self.executed = []
+                self.rowcount = 1
+            def execute(self, sql, params=None):
+                self.executed.append((sql, list(params) if params else []))
+
+        class FakeConn:
+            def __init__(self):
+                self.cur = FakeCursor()
+                self.committed = False
+            def cursor(self):
+                return self.cur
+            def commit(self):
+                self.committed = True
+
+        db = DatabaseManager()
+        db.conn = FakeConn()
+        n = db.update_record("Clienti", "ID", 5, {"ID": 5, "Nome": "Mario", "Citta": "Roma"})
+        sql, params = db.conn.cur.executed[0]
+        set_part, where_part = sql.split("WHERE")
+        self.assertIn("UPDATE [Clienti] SET", set_part)
+        self.assertIn("[Nome] = ?", set_part)
+        self.assertIn("[Citta] = ?", set_part)
+        self.assertNotIn("[ID]", set_part)          # la PK non finisce nel SET
+        self.assertIn("[ID] = ?", where_part)        # la PK e' nella WHERE
+        self.assertEqual(params, ["Mario", "Roma", 5])  # valori + pk in coda
+        self.assertTrue(db.conn.committed)
+        self.assertEqual(n, 1)
+
+    def test_update_record_no_editable_columns_returns_zero(self):
+        from db_manager import DatabaseManager
+        db = DatabaseManager()
+        db.conn = object()  # non deve essere usato
+        self.assertEqual(db.update_record("T", "ID", 1, {"ID": 1}), 0)
+
+    def test_direct_update_gating(self):
+        ctrl = ResultController(SimpleNamespace(current_result=None))
+        # mono-tabella con PK riconoscibile -> editabile
+        ctrl.state.current_result = {"source_table": "Clienti", "columns": ["ID", "Nome"]}
+        self.assertTrue(ctrl.result_supports_direct_update())
+        # risultato fuzzy (colonne _1/_2) -> NON editabile (mappa 2 record)
+        ctrl.state.current_result = {"source_table": "Clienti", "columns": ["ID_1", "Nome_1", "ID_2"]}
+        self.assertFalse(ctrl.result_supports_direct_update())
+        # senza source_table -> NON editabile
+        ctrl.state.current_result = {"columns": ["ID", "Nome"]}
+        self.assertFalse(ctrl.result_supports_direct_update())
+
+
 class BulkValueReplacementTests(unittest.TestCase):
     """Sostituzione massiva di valori su condizioni selezionate in libreria (#28)."""
 

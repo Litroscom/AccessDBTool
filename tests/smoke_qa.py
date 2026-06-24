@@ -345,6 +345,70 @@ class AppBuilderIntegrationTests(unittest.TestCase):
         self.assertEqual(cfg.get("exclude_dest_conditions")[0]["value"], "ANN")
 
 
+class RecordEditorDialogTests(unittest.TestCase):
+    """Modifica diretta di un record dal risultato: il dialog deve castare i
+    valori al tipo originale e chiamare db.update_record con la PK giusta."""
+
+    def setUp(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+
+    def tearDown(self):
+        self.root.destroy()
+
+    def test_save_casts_values_and_calls_update_record(self):
+        from unittest.mock import patch
+        from ui_components import RecordEditorDialog
+
+        class FakeEditDB:
+            def __init__(self):
+                self.calls = []
+            def update_record(self, table, pk_col, pk_val, data):
+                self.calls.append((table, pk_col, pk_val, dict(data)))
+                return 1
+
+        db = FakeEditDB()
+        data = {"ID": 5, "Amount": 3.0, "Nome": "Mario"}  # valori tipizzati come da fetch
+        with patch("ui_components.messagebox"):
+            dlg = RecordEditorDialog(self.root, db, "Invoices", data)
+            # PK riconosciuta e bloccata
+            self.assertEqual(dlg.pk_col, "ID")
+            # utente modifica due campi (virgola decimale + testo)
+            dlg.entries["Amount"].delete(0, tk.END)
+            dlg.entries["Amount"].insert(0, "12,5")
+            dlg.entries["Nome"].delete(0, tk.END)
+            dlg.entries["Nome"].insert(0, "Luigi")
+            dlg._save()
+
+        self.assertEqual(len(db.calls), 1)
+        table, pk_col, pk_val, new = db.calls[0]
+        self.assertEqual((table, pk_col, pk_val), ("Invoices", "ID", 5))
+        self.assertEqual(new["Amount"], 12.5)   # "12,5" -> float 12.5
+        self.assertEqual(new["Nome"], "Luigi")
+        self.assertNotIn("ID", new)             # PK esclusa dall'update
+        self.assertTrue(dlg.result)
+
+    def test_emptied_numeric_field_becomes_null(self):
+        from unittest.mock import patch
+        from ui_components import RecordEditorDialog
+
+        class FakeEditDB:
+            def __init__(self):
+                self.calls = []
+            def update_record(self, table, pk_col, pk_val, data):
+                self.calls.append((table, pk_col, pk_val, dict(data)))
+                return 1
+
+        db = FakeEditDB()
+        data = {"ID": 1, "Amount": 9.0}
+        with patch("ui_components.messagebox"):
+            dlg = RecordEditorDialog(self.root, db, "Invoices", data)
+            dlg.entries["Amount"].delete(0, tk.END)  # svuota campo numerico
+            dlg._save()
+        _t, _p, _v, new = db.calls[0]
+        self.assertIsNone(new["Amount"])  # numerico svuotato -> NULL, non ""
+
+
 class ConditionManagerBulkReplaceTests(unittest.TestCase):
     """Sostituzione massiva valori dal 'Gestione Condizioni' (#28), headless:
     esercita plan+apply senza i dialog interattivi."""
