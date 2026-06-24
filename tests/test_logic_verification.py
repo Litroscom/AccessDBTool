@@ -851,6 +851,41 @@ class StorageV5Tests(unittest.TestCase):
 class DirectRecordEditTests(unittest.TestCase):
     """Verifica modifica diretta di un record dal risultato di una condizione."""
 
+    def _edit_ctrl(self, current_result, db_tables, connected=True, label="Cur.mdb"):
+        db = SimpleNamespace(connected=connected, tables=list(db_tables), db_path="cur.mdb")
+        state = SimpleNamespace(current_result=current_result, db=db, current_db_label=label)
+        return ResultController(state)
+
+    def test_edit_ok_when_table_present(self):
+        ctrl = self._edit_ctrl({"source_table": "Clienti"}, ["Clienti", "Ordini"])
+        ok, msg = ctrl.ensure_db_for_current_result(None)
+        self.assertTrue(ok)
+        self.assertEqual(msg, "")
+
+    def test_edit_refuses_when_table_absent_in_current_db(self):
+        ctrl = self._edit_ctrl({"source_table": "InvitoTel"}, ["Clienti", "Ordini"])
+        ok, msg = ctrl.ensure_db_for_current_result(None)
+        self.assertFalse(ok)
+        self.assertIn("InvitoTel", msg)
+
+    def test_edit_switches_db_using_condition_label(self):
+        calls = []
+        def cb(label):
+            calls.append(label)
+            return True
+        ctrl = self._edit_ctrl(
+            {"source_table": "X", "_condition": {"database_label": "Altro.mdb"}}, ["X"])
+        ok, _msg = ctrl.ensure_db_for_current_result(cb)
+        self.assertTrue(ok)
+        self.assertEqual(calls, ["Altro.mdb"])  # ha provato ad aprire il DB della condizione
+
+    def test_edit_refuses_when_db_switch_fails(self):
+        ctrl = self._edit_ctrl(
+            {"source_table": "X", "_condition": {"database_label": "Altro.mdb"}}, ["X"])
+        ok, msg = ctrl.ensure_db_for_current_result(lambda _l: False)
+        self.assertFalse(ok)
+        self.assertIn("Altro.mdb", msg)
+
     def test_direct_update_gating(self):
         ctrl = ResultController(SimpleNamespace(current_result=None))
         # mono-tabella con PK riconoscibile -> editabile

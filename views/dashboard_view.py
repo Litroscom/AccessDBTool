@@ -171,6 +171,11 @@ class DashboardView(ttk.Frame):
                 state_data = self.batch_ctrl.dashboard_state_for_condition(cond) if self.batch_ctrl else {}
                 result = state_data.get("result")
                 if result:
+                    # Collega la condizione al risultato: porta con sé il
+                    # database_label, così la modifica diretta di un record
+                    # scrive sul DB giusto (la dashboard è multi-DB).
+                    if isinstance(result, dict) and "_condition" not in result:
+                        result["_condition"] = cond
                     self.state.current_result = result
                     self.results_view.show_results(result)
         except Exception:

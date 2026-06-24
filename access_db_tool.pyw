@@ -302,6 +302,7 @@ class App(tk.Tk):
             if hasattr(view, "results_view"):
                 view.results_view.result_ctrl = self.result_ctrl
                 view.results_view.set_open_in_builder_callback(self._open_cond_in_builder)
+                view.results_view.set_ensure_db_callback(self.db_ctrl.ensure_active_database_for_label)
             # Doppio click su riga dashboard -> apri nel builder (tab Controlli)
             if hasattr(view, "set_open_in_builder_callback"):
                 view.set_open_in_builder_callback(self._open_cond_in_builder)

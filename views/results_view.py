@@ -14,6 +14,7 @@ class ResultsView(ttk.Frame):
         self._current_title = ""
         self._on_context_menu = None
         self._on_open_in_builder = None
+        self._ensure_db_cb = None
         self._enable_fullscreen = enable_fullscreen
         self._build_ui()
 
@@ -22,6 +23,11 @@ class ResultsView(ttk.Frame):
 
     def set_open_in_builder_callback(self, callback):
         self._on_open_in_builder = callback
+
+    def set_ensure_db_callback(self, callback):
+        """callback(database_label) -> bool: porta la connessione attiva sul DB
+        del risultato prima di modificarne un record."""
+        self._ensure_db_cb = callback
 
     def _build_ui(self):
         self._build_action_bar()
@@ -206,6 +212,9 @@ class ResultsView(ttk.Frame):
                 "Operazione non disponibile",
                 "La modifica diretta è disponibile solo per risultati mappabili a una singola tabella.",
             )
+        ok, msg = self.result_ctrl.ensure_db_for_current_result(self._ensure_db_cb)
+        if not ok:
+            return messagebox.showwarning("Database non corrispondente", msg)
         res = self.state.current_result
         sel = self._selected_indices()
         if not sel:
@@ -229,6 +238,9 @@ class ResultsView(ttk.Frame):
                 "Operazione non disponibile",
                 "La sostituzione massiva è disponibile solo per risultati che mappano in modo univoco a una singola tabella.",
             )
+        ok, msg = self.result_ctrl.ensure_db_for_current_result(self._ensure_db_cb)
+        if not ok:
+            return messagebox.showwarning("Database non corrispondente", msg)
         res = self.state.current_result
         rows = res.get("rows", []) if res else []
         if not rows:
@@ -372,7 +384,8 @@ class ResultsView(ttk.Frame):
             top.geometry("1280x800")
         fs = ResultsView(top, self.state, self.result_ctrl, enable_fullscreen=False)
         fs.pack(fill=tk.BOTH, expand=True)
-        # Propaga il callback 'apri nel builder' anche alla finestra fullscreen.
+        # Propaga i callback alla finestra fullscreen.
         fs._on_open_in_builder = self._on_open_in_builder
+        fs._ensure_db_cb = self._ensure_db_cb
         fs.show_results(res)
         top.bind("<Escape>", lambda _e: top.destroy())

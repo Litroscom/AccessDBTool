@@ -106,6 +106,37 @@ class ResultController:
                 except Exception:
                     pass
 
+    def ensure_db_for_current_result(self, ensure_db_cb=None):
+        """Assicura che la connessione attiva sia il database del risultato
+        corrente prima di modificarne un record.
+
+        I risultati possono arrivare dalla dashboard (batch multi-DB): la
+        modifica deve scrivere sul DB dove gira la condizione, non su quello
+        eventualmente aperto nel builder. Ritorna (ok, messaggio_errore).
+        """
+        res = self.state.current_result or {}
+        cond = res.get("_condition") or {}
+        label = str(cond.get("database_label", "") or "").strip()
+        if label and ensure_db_cb is not None:
+            if not ensure_db_cb(label):
+                return False, (
+                    f"Impossibile aprire il database '{label}' su cui gira la condizione. "
+                    "Modifica annullata."
+                )
+        table = res.get("source_table")
+        db = self.state.db
+        if table and getattr(db, "connected", False):
+            tables = getattr(db, "tables", []) or []
+            if table not in tables:
+                current = (getattr(self.state, "current_db_label", "")
+                           or getattr(db, "db_path", "") or "(nessuno)")
+                return False, (
+                    f"La tabella '{table}' non esiste nel database attualmente aperto "
+                    f"({current}).\nApri il database corretto (quello su cui gira la "
+                    "condizione) e riprova la modifica."
+                )
+        return True, ""
+
     def result_supports_direct_update(self):
         res = self.state.current_result
         if not res or not res.get("source_table"):
