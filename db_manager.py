@@ -256,9 +256,17 @@ class DatabaseManager:
         if not key_dict:
             raise ValueError("Impossibile identificare il record (nessuna chiave): modifica annullata.")
 
+        # Solo colonne REALI della tabella: una colonna del risultato che non
+        # esiste nella tabella (computata, alias, frutto di join) verrebbe
+        # interpretata da Access come parametro -> "Parametri insufficienti"
+        # (-3010). Se i metadati colonne non sono noti non filtriamo, per non
+        # perdere modifiche legittime.
+        known_cols = set(self.columns(table))
         set_cols, set_vals = [], []
         for k, v in data_dict.items():
             if k in key_dict:
+                continue
+            if known_cols and k not in known_cols:
                 continue
             set_cols.append(f"{self._qi(k)} = ?")
             set_vals.append(v)
@@ -280,11 +288,9 @@ class DatabaseManager:
                     f"Modifica annullata: la chiave identifica {count} record (atteso esattamente 1). "
                     "Nessuna modifica è stata applicata al database."
                 )
+            update_sql = f"UPDATE {self._qi(table)} SET {', '.join(set_cols)} WHERE {key_clause}"
             try:
-                cur.execute(
-                    f"UPDATE {self._qi(table)} SET {', '.join(set_cols)} WHERE {key_clause}",
-                    set_vals + key_vals,
-                )
+                cur.execute(update_sql, set_vals + key_vals)
                 self.conn.commit()
                 return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 1
             except Exception as e:
@@ -292,7 +298,10 @@ class DatabaseManager:
                     self.conn.rollback()
                 except Exception as rb_err:
                     logger.warning(f"Errore durante il rollback di update_record_safe: {rb_err}")
-                logger.error(f"Errore durante update_record_safe su [{table}]: {e}")
+                logger.error(
+                    "Errore update_record_safe su [%s]: %s | SQL: %s | colonne tabella note: %s",
+                    table, e, update_sql, sorted(known_cols),
+                )
                 raise
 
     def bulk_update(self, table, set_col, pk_col, pairs):

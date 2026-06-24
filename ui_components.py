@@ -621,6 +621,12 @@ class RecordEditorDialog(tk.Toplevel):
         # Identifica le colonne chiave che identificano UNIVOCAMENTE il record.
         self.key_cols, self._key_error = self._determine_key_columns()
         self.pk_col = self.key_cols[0] if self.key_cols else None
+        # Colonne reali della tabella: le altre (computate/alias/join) non sono
+        # modificabili e vanno mostrate in sola lettura.
+        try:
+            self._table_cols = set(self.db.columns(table)) if hasattr(self.db, "columns") else set()
+        except Exception:
+            self._table_cols = set()
 
         for k, v in record_data.items():
             f = ttk.Frame(self.scroll_frame)
@@ -635,6 +641,9 @@ class RecordEditorDialog(tk.Toplevel):
             if k in self.key_cols:
                 ent.config(state="readonly")
                 lbl.config(text=k + " (PK)")
+            elif self._table_cols and k not in self._table_cols:
+                ent.config(state="readonly")
+                lbl.config(text=k + " (non modificabile)")
             else:
                 # Se è un campo numerico, rimappa il punto (tastierino o tastiera) in virgola
                 if isinstance(v, (float, int, Decimal)):

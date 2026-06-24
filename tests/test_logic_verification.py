@@ -973,6 +973,29 @@ class SafeSingleRecordUpdateTests(unittest.TestCase):
         self.assertIn("AND", where_part)
         self.assertEqual(params, ["z", 1, 2])
 
+    def test_set_excludes_columns_not_in_table(self):
+        # Le colonne del risultato che NON sono colonne reali della tabella
+        # (computate, alias, join) non devono finire nell'UPDATE: altrimenti
+        # Access le tratta come parametri -> "Parametri insufficienti" (-3010).
+        db = self._db(count=1)
+        db.table_columns = {"Clienti": [{"name": "ID"}, {"name": "Nome"}]}
+        db.update_record_safe("Clienti", {"ID": 5}, {"ID": 5, "Nome": "X", "Calcolato": "Y"})
+        sql, params = db.conn.cur.updates[0]
+        set_part = sql.split("WHERE")[0]
+        self.assertIn("[Nome] = ?", set_part)
+        self.assertNotIn("[Calcolato]", set_part)   # colonna non reale esclusa
+        self.assertEqual(params, ["X", 5])
+
+    def test_set_not_filtered_when_table_metadata_unknown(self):
+        # Se le colonne della tabella non sono note (lista vuota) non filtriamo:
+        # meglio provare che perdere modifiche legittime.
+        db = self._db(count=1)
+        db.table_columns = {}  # nessun metadato
+        db.update_record_safe("T", {"ID": 1}, {"ID": 1, "A": "x", "B": "y"})
+        sql, _ = db.conn.cur.updates[0]
+        self.assertIn("[A] = ?", sql)
+        self.assertIn("[B] = ?", sql)
+
     def test_no_editable_columns_returns_zero_without_query(self):
         db = self._db(count=1)
         self.assertEqual(db.update_record_safe("T", {"ID": 5}, {"ID": 5}), 0)

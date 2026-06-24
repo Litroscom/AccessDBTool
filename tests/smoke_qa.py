@@ -439,7 +439,10 @@ class ConditionManagerBulkReplaceTests(unittest.TestCase):
     esercita plan+apply senza i dialog interattivi."""
 
     def setUp(self):
-        self.root = tk.Tk()
+        # ConditionManagerDialog usa widget con opzione 'bootstyle' (ttkbootstrap):
+        # serve un root ttkbootstrap anche quando il test gira isolato.
+        import ttkbootstrap as tb
+        self.root = tb.Window()
         self.root.withdraw()
 
     def tearDown(self):
