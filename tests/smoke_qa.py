@@ -346,8 +346,9 @@ class AppBuilderIntegrationTests(unittest.TestCase):
 
 
 class RecordEditorDialogTests(unittest.TestCase):
-    """Modifica diretta di un record dal risultato: il dialog deve castare i
-    valori al tipo originale e chiamare db.update_record con la PK giusta."""
+    """Modifica diretta di un record dal risultato: il dialog deve usare la
+    chiave primaria reale, castare i valori al tipo originale e scrivere via
+    db.update_record_safe (rifiuta se non identifica esattamente 1 record)."""
 
     def setUp(self):
         self.root = tk.Tk()
@@ -356,24 +357,25 @@ class RecordEditorDialogTests(unittest.TestCase):
     def tearDown(self):
         self.root.destroy()
 
-    def test_save_casts_values_and_calls_update_record(self):
+    class _FakeEditDB:
+        def __init__(self, pks=("ID",)):
+            self.calls = []
+            self._pks = list(pks)
+        def primary_keys(self, table):
+            return list(self._pks)
+        def update_record_safe(self, table, key_dict, data):
+            self.calls.append((table, dict(key_dict), dict(data)))
+            return 1
+
+    def test_save_uses_real_pk_and_safe_update(self):
         from unittest.mock import patch
         from ui_components import RecordEditorDialog
 
-        class FakeEditDB:
-            def __init__(self):
-                self.calls = []
-            def update_record(self, table, pk_col, pk_val, data):
-                self.calls.append((table, pk_col, pk_val, dict(data)))
-                return 1
-
-        db = FakeEditDB()
+        db = self._FakeEditDB(pks=["ID"])
         data = {"ID": 5, "Amount": 3.0, "Nome": "Mario"}  # valori tipizzati come da fetch
         with patch("ui_components.messagebox"):
             dlg = RecordEditorDialog(self.root, db, "Invoices", data)
-            # PK riconosciuta e bloccata
-            self.assertEqual(dlg.pk_col, "ID")
-            # utente modifica due campi (virgola decimale + testo)
+            self.assertEqual(dlg.key_cols, ["ID"])  # PK reale, bloccata
             dlg.entries["Amount"].delete(0, tk.END)
             dlg.entries["Amount"].insert(0, "12,5")
             dlg.entries["Nome"].delete(0, tk.END)
@@ -381,31 +383,54 @@ class RecordEditorDialogTests(unittest.TestCase):
             dlg._save()
 
         self.assertEqual(len(db.calls), 1)
-        table, pk_col, pk_val, new = db.calls[0]
-        self.assertEqual((table, pk_col, pk_val), ("Invoices", "ID", 5))
-        self.assertEqual(new["Amount"], 12.5)   # "12,5" -> float 12.5
+        table, key_dict, new = db.calls[0]
+        self.assertEqual(table, "Invoices")
+        self.assertEqual(key_dict, {"ID": 5})       # WHERE sulla PK reale
+        self.assertEqual(new["Amount"], 12.5)       # "12,5" -> float 12.5
         self.assertEqual(new["Nome"], "Luigi")
-        self.assertNotIn("ID", new)             # PK esclusa dall'update
+        self.assertNotIn("ID", new)                 # PK esclusa dal SET
         self.assertTrue(dlg.result)
+
+    def test_refuses_when_primary_key_not_in_result(self):
+        from unittest.mock import patch
+        from ui_components import RecordEditorDialog
+
+        db = self._FakeEditDB(pks=["ID"])
+        data = {"Nome": "Mario", "Citta": "Roma"}  # niente ID tra le colonne
+        with patch("ui_components.messagebox") as mb:
+            dlg = RecordEditorDialog(self.root, db, "Clienti", data)
+            self.assertEqual(dlg.key_cols, [])      # nessuna chiave sicura
+            dlg._save()
+            self.assertTrue(mb.showwarning.called)   # avvisa l'utente
+        self.assertEqual(db.calls, [])               # NESSUNA scrittura tentata
+        self.assertIsNone(dlg.result)
+
+    def test_fallback_key_when_driver_exposes_no_pk(self):
+        from unittest.mock import patch
+        from ui_components import RecordEditorDialog
+
+        db = self._FakeEditDB(pks=[])  # driver non espone PK
+        data = {"ID": 7, "Nome": "Mario"}
+        with patch("ui_components.messagebox"):
+            dlg = RecordEditorDialog(self.root, db, "Clienti", data)
+            self.assertEqual(dlg.key_cols, ["ID"])  # ripiega su colonna id-like
+            dlg.entries["Nome"].delete(0, tk.END)
+            dlg.entries["Nome"].insert(0, "Luigi")
+            dlg._save()
+        _t, key_dict, _new = db.calls[0]
+        self.assertEqual(key_dict, {"ID": 7})
 
     def test_emptied_numeric_field_becomes_null(self):
         from unittest.mock import patch
         from ui_components import RecordEditorDialog
 
-        class FakeEditDB:
-            def __init__(self):
-                self.calls = []
-            def update_record(self, table, pk_col, pk_val, data):
-                self.calls.append((table, pk_col, pk_val, dict(data)))
-                return 1
-
-        db = FakeEditDB()
+        db = self._FakeEditDB(pks=["ID"])
         data = {"ID": 1, "Amount": 9.0}
         with patch("ui_components.messagebox"):
             dlg = RecordEditorDialog(self.root, db, "Invoices", data)
             dlg.entries["Amount"].delete(0, tk.END)  # svuota campo numerico
             dlg._save()
-        _t, _p, _v, new = db.calls[0]
+        _t, _key, new = db.calls[0]
         self.assertIsNone(new["Amount"])  # numerico svuotato -> NULL, non ""
 
 

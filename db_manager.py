@@ -11,6 +11,7 @@ class DatabaseManager:
         self.db_path = ""
         self.tables = []
         self.table_columns = {}
+        self.table_pks = {}
         self._lock = threading.Lock()
 
     @staticmethod
@@ -84,10 +85,12 @@ class DatabaseManager:
             self.db_path = ""
             self.tables = []
             self.table_columns = {}
+            self.table_pks = {}
 
     def _discover(self):
         self.tables = []
         self.table_columns = {}
+        self.table_pks = {}
         try:
             cur = self.conn.cursor()
             for row in cur.tables(tableType="TABLE"):
@@ -99,9 +102,29 @@ class DatabaseManager:
             
             for table in self.tables:
                 self.table_columns[table] = self._get_columns(table)
+                self.table_pks[table] = self._get_primary_keys(table)
             logger.info(f"Scoperte {len(self.tables)} tabelle.")
         except Exception as e:
             logger.error(f"Errore durante il discovery delle tabelle: {e}")
+
+    def _get_primary_keys(self, table):
+        """Colonne della chiave primaria reale della tabella (via ODBC).
+        Lista vuota se il driver non la espone."""
+        pks = []
+        try:
+            cur = self.conn.cursor()
+            for row in cur.primaryKeys(table=table):
+                name = getattr(row, "column_name", None)
+                if name is None and len(row) > 3:
+                    name = row[3]  # COLUMN_NAME nello standard ODBC
+                if name:
+                    pks.append(name)
+        except Exception as e:
+            logger.debug(f"Chiave primaria non disponibile per [{table}]: {e}")
+        return pks
+
+    def primary_keys(self, table):
+        return list(self.table_pks.get(table, []))
 
     def _get_columns(self, table):
         cols = []
@@ -220,21 +243,57 @@ class DatabaseManager:
             # Tipi testo/date → ritorna stringa
             return val_s
 
-    def update_record(self, table, pk_col, pk_val, data_dict):
-        """Aggiorna i campi di un record specifico."""
-        cols = []
-        vals = []
+    def update_record_safe(self, table, key_dict, data_dict):
+        """Aggiorna UN SOLO record con garanzia di unicità.
+
+        key_dict identifica il record (chiave primaria reale o chiave univoca).
+        Prima di scrivere verifica che la chiave selezioni ESATTAMENTE 1 record;
+        se ne seleziona 0 o più di 1 solleva ValueError e NON scrive nulla.
+        Conteggio + UPDATE avvengono nella stessa transazione, sotto lock, con
+        un solo commit. Ritorna le righe aggiornate (1) o 0 se non c'è nulla da
+        modificare.
+        """
+        if not key_dict:
+            raise ValueError("Impossibile identificare il record (nessuna chiave): modifica annullata.")
+
+        set_cols, set_vals = [], []
         for k, v in data_dict.items():
-            if k == pk_col: continue
-            cols.append(f"{self._qi(k)} = ?")
-            vals.append(v)
+            if k in key_dict:
+                continue
+            set_cols.append(f"{self._qi(k)} = ?")
+            set_vals.append(v)
+        if not set_cols:
+            return 0
 
-        if not cols: return 0
+        key_clause = " AND ".join(f"{self._qi(k)} = ?" for k in key_dict)
+        key_vals = list(key_dict.values())
 
-        sql = f"UPDATE {self._qi(table)} SET {', '.join(cols)} WHERE {self._qi(pk_col)} = ?"
-        vals.append(pk_val)
-
-        return self.execute(sql, vals)
+        with self._lock:
+            if self.conn is None:
+                raise ConnectionError("Nessuna connessione al database attiva. Aprire un database prima di eseguire query.")
+            cur = self.conn.cursor()
+            cur.execute(f"SELECT COUNT(*) FROM {self._qi(table)} WHERE {key_clause}", key_vals)
+            row = cur.fetchone()
+            count = int(row[0]) if row else 0
+            if count != 1:
+                raise ValueError(
+                    f"Modifica annullata: la chiave identifica {count} record (atteso esattamente 1). "
+                    "Nessuna modifica è stata applicata al database."
+                )
+            try:
+                cur.execute(
+                    f"UPDATE {self._qi(table)} SET {', '.join(set_cols)} WHERE {key_clause}",
+                    set_vals + key_vals,
+                )
+                self.conn.commit()
+                return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 1
+            except Exception as e:
+                try:
+                    self.conn.rollback()
+                except Exception as rb_err:
+                    logger.warning(f"Errore durante il rollback di update_record_safe: {rb_err}")
+                logger.error(f"Errore durante update_record_safe su [{table}]: {e}")
+                raise
 
     def bulk_update(self, table, set_col, pk_col, pairs):
         """pairs = list of (typed_value, typed_pk). Single transaction, one commit.

@@ -851,45 +851,6 @@ class StorageV5Tests(unittest.TestCase):
 class DirectRecordEditTests(unittest.TestCase):
     """Verifica modifica diretta di un record dal risultato di una condizione."""
 
-    def test_update_record_builds_parameterized_sql_excluding_pk(self):
-        from db_manager import DatabaseManager
-
-        class FakeCursor:
-            def __init__(self):
-                self.executed = []
-                self.rowcount = 1
-            def execute(self, sql, params=None):
-                self.executed.append((sql, list(params) if params else []))
-
-        class FakeConn:
-            def __init__(self):
-                self.cur = FakeCursor()
-                self.committed = False
-            def cursor(self):
-                return self.cur
-            def commit(self):
-                self.committed = True
-
-        db = DatabaseManager()
-        db.conn = FakeConn()
-        n = db.update_record("Clienti", "ID", 5, {"ID": 5, "Nome": "Mario", "Citta": "Roma"})
-        sql, params = db.conn.cur.executed[0]
-        set_part, where_part = sql.split("WHERE")
-        self.assertIn("UPDATE [Clienti] SET", set_part)
-        self.assertIn("[Nome] = ?", set_part)
-        self.assertIn("[Citta] = ?", set_part)
-        self.assertNotIn("[ID]", set_part)          # la PK non finisce nel SET
-        self.assertIn("[ID] = ?", where_part)        # la PK e' nella WHERE
-        self.assertEqual(params, ["Mario", "Roma", 5])  # valori + pk in coda
-        self.assertTrue(db.conn.committed)
-        self.assertEqual(n, 1)
-
-    def test_update_record_no_editable_columns_returns_zero(self):
-        from db_manager import DatabaseManager
-        db = DatabaseManager()
-        db.conn = object()  # non deve essere usato
-        self.assertEqual(db.update_record("T", "ID", 1, {"ID": 1}), 0)
-
     def test_direct_update_gating(self):
         ctrl = ResultController(SimpleNamespace(current_result=None))
         # mono-tabella con PK riconoscibile -> editabile
@@ -901,6 +862,98 @@ class DirectRecordEditTests(unittest.TestCase):
         # senza source_table -> NON editabile
         ctrl.state.current_result = {"columns": ["ID", "Nome"]}
         self.assertFalse(ctrl.result_supports_direct_update())
+
+
+class SafeSingleRecordUpdateTests(unittest.TestCase):
+    """update_record_safe garantisce che l'UPDATE colpisca ESATTAMENTE 1 record:
+    verifica COUNT prima di scrivere, altrimenti rifiuta senza toccare nulla."""
+
+    class _Cursor:
+        def __init__(self, count):
+            self._count = count
+            self.updates = []
+            self.rowcount = 1
+            self._fetch = None
+        def execute(self, sql, params=None):
+            p = list(params or [])
+            if sql.strip().upper().startswith("SELECT COUNT"):
+                self._fetch = (self._count,)
+            else:
+                self.updates.append((sql, p))
+        def fetchone(self):
+            return self._fetch
+
+    class _Conn:
+        def __init__(self, count):
+            self.cur = SafeSingleRecordUpdateTests._Cursor(count)
+            self.committed = False
+            self.rolled = False
+        def cursor(self):
+            return self.cur
+        def commit(self):
+            self.committed = True
+        def rollback(self):
+            self.rolled = True
+
+    def _db(self, count):
+        from db_manager import DatabaseManager
+        db = DatabaseManager()
+        db.conn = self._Conn(count)
+        return db
+
+    def test_updates_only_when_exactly_one_match(self):
+        db = self._db(count=1)
+        n = db.update_record_safe("Clienti", {"ID": 5}, {"ID": 5, "Nome": "X", "Citta": "Y"})
+        self.assertEqual(n, 1)
+        self.assertTrue(db.conn.committed)
+        sql, params = db.conn.cur.updates[0]
+        set_part, where_part = sql.split("WHERE")
+        self.assertIn("[Nome] = ?", set_part)
+        self.assertIn("[Citta] = ?", set_part)
+        self.assertNotIn("[ID]", set_part)
+        self.assertIn("[ID] = ?", where_part)
+        self.assertEqual(params, ["X", "Y", 5])
+
+    def test_refuses_when_zero_matches(self):
+        db = self._db(count=0)
+        with self.assertRaises(ValueError):
+            db.update_record_safe("Clienti", {"ID": 5}, {"ID": 5, "Nome": "X"})
+        self.assertEqual(db.conn.cur.updates, [])   # nessuna scrittura
+        self.assertFalse(db.conn.committed)
+
+    def test_refuses_when_multiple_matches(self):
+        db = self._db(count=3)
+        with self.assertRaises(ValueError):
+            db.update_record_safe("Clienti", {"Nome": "Mario"}, {"Nome": "Mario", "Citta": "Y"})
+        self.assertEqual(db.conn.cur.updates, [])   # MAI scrive se >1
+        self.assertFalse(db.conn.committed)
+
+    def test_composite_key_uses_all_columns_in_where(self):
+        db = self._db(count=1)
+        db.update_record_safe("T", {"A": 1, "B": 2}, {"A": 1, "B": 2, "Val": "z"})
+        sql, params = db.conn.cur.updates[0]
+        where_part = sql.split("WHERE")[1]
+        self.assertIn("[A] = ?", where_part)
+        self.assertIn("[B] = ?", where_part)
+        self.assertIn("AND", where_part)
+        self.assertEqual(params, ["z", 1, 2])
+
+    def test_no_editable_columns_returns_zero_without_query(self):
+        db = self._db(count=1)
+        self.assertEqual(db.update_record_safe("T", {"ID": 5}, {"ID": 5}), 0)
+        self.assertEqual(db.conn.cur.updates, [])
+
+    def test_empty_key_refuses(self):
+        db = self._db(count=1)
+        with self.assertRaises(ValueError):
+            db.update_record_safe("T", {}, {"Nome": "X"})
+
+    def test_primary_keys_accessor(self):
+        from db_manager import DatabaseManager
+        db = DatabaseManager()
+        self.assertEqual(db.primary_keys("Sconosciuta"), [])
+        db.table_pks = {"Clienti": ["ID"]}
+        self.assertEqual(db.primary_keys("Clienti"), ["ID"])
 
 
 class BulkValueReplacementTests(unittest.TestCase):

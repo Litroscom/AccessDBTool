@@ -618,20 +618,21 @@ class RecordEditorDialog(tk.Toplevel):
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         self.entries = {}
-        # Identifica PK
-        self.pk_col = self._guess_pk()
-        
+        # Identifica le colonne chiave che identificano UNIVOCAMENTE il record.
+        self.key_cols, self._key_error = self._determine_key_columns()
+        self.pk_col = self.key_cols[0] if self.key_cols else None
+
         for k, v in record_data.items():
             f = ttk.Frame(self.scroll_frame)
             f.pack(fill=tk.X, pady=5)
             lbl = ttk.Label(f, text=k, width=20)
             lbl.pack(side=tk.LEFT)
-            
+
             ent = ttk.Entry(f)
             ent.insert(0, str(v) if v is not None else "")
             ent.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            
-            if k == self.pk_col:
+
+            if k in self.key_cols:
                 ent.config(state="readonly")
                 lbl.config(text=k + " (PK)")
             else:
@@ -665,13 +666,42 @@ class RecordEditorDialog(tk.Toplevel):
             if c.lower().startswith("id"): return c
         # Fallback: usa la prima colonna ma avvisa l'utente
         logger.warning(f"Chiave primaria non identificata per '{self.table}'. "
-                       f"Uso '{cols[0]}' come fallback. Possibile update multi-record.")
+                       f"Uso '{cols[0]}' come fallback. update_record_safe verifichera' "
+                       f"comunque l'unicita' a runtime.")
         return cols[0]
 
+    def _determine_key_columns(self):
+        """Colonne che identificano univocamente il record da modificare.
+        Preferisce la chiave primaria REALE del database; se non e' tra le
+        colonne mostrate, ritorna ([], errore) cosi' la modifica viene bloccata
+        con un messaggio chiaro. Senza PK nota dal driver ripiega su una colonna
+        'id-like': la sicurezza e' comunque garantita a runtime da
+        update_record_safe (UPDATE solo se COUNT==1)."""
+        pks = self.db.primary_keys(self.table) if hasattr(self.db, "primary_keys") else []
+        if pks:
+            missing = [p for p in pks if p not in self.data]
+            if missing:
+                return [], (
+                    "Chiave primaria mancante",
+                    f"Per modificare il record in sicurezza serve la chiave primaria "
+                    f"{', '.join(missing)}, ma non è tra le colonne mostrate.\n\n"
+                    "Aggiungi questa colonna alle 'colonne da visualizzare' della "
+                    "condizione, riesegui il controllo e riprova la modifica.",
+                )
+            return list(pks), None
+        guess = self._guess_pk()
+        return ([guess] if guess else []), None
+
     def _save(self):
+        if not self.key_cols:
+            if self._key_error:
+                messagebox.showwarning(*self._key_error)
+            else:
+                messagebox.showerror("Errore", "Impossibile identificare il record da modificare.")
+            return
         new_data = {}
         for k, ent in self.entries.items():
-            if k != self.pk_col:
+            if k not in self.key_cols:
                 val_str = ent.get()
                 orig_val = self.data.get(k)
 
@@ -713,13 +743,17 @@ class RecordEditorDialog(tk.Toplevel):
                     new_data[k] = val_str
         
         try:
-            rowcount = self.db.update_record(self.table, self.pk_col, self.data[self.pk_col], new_data)
+            key_dict = {k: self.data[k] for k in self.key_cols}
+            rowcount = self.db.update_record_safe(self.table, key_dict, new_data)
             if rowcount > 0:
                 messagebox.showinfo("Successo", f"Record aggiornato correttamente ({rowcount} righe).")
                 self.result = True
                 self.destroy()
             else:
-                messagebox.showwarning("Attenzione", "Nessuna riga aggiornata. Verifica i permessi del DB.")
+                messagebox.showinfo("Nessuna modifica", "Nessun campo da aggiornare.")
+        except ValueError as e:
+            # update_record_safe ha rifiutato (0 o >1 record): nulla è stato scritto.
+            messagebox.showerror("Modifica annullata", str(e))
         except Exception as e:
             messagebox.showerror("Errore", f"Impossibile aggiornare il record:\n{e}")
 
