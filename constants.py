@@ -33,6 +33,7 @@ CONDITION_TYPES = {
     "mandatory_record_check": "Controllo Requisito Settimanale",
     "row_cross_column_check":  "Coerenza Colonne (stessa riga)",
     "aggregate_threshold_check": "Controllo Soglia Aggregata",
+    "aggregate_multi_table_threshold": "Soglia Aggregata Multi-tabella",
     "lookup_validation":       "Dizionario Obbligato (Lookup)",
     "dependent_condition_check": "Condizione Dipendente (SE...ALLORA)",
 }

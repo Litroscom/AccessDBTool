@@ -286,6 +286,7 @@ class ConditionExecutor:
             "mandatory_record_check": self._mandatory_record_check,
             "row_cross_column_check":    self._row_cross_column,
             "aggregate_threshold_check": self._aggregate_threshold,
+            "aggregate_multi_table_threshold": self._aggregate_multi_table,
             "lookup_validation":         self._lookup_validation,
             "dependent_condition_check": self._dependent_condition,
         }
@@ -1190,3 +1191,79 @@ class ConditionExecutor:
         if conditions or exclude_conditions:
             desc += " | " + self._describe_condition_sets(conditions, exclude_conditions)
         return self._result(f"Soglia aggregata: {table}", desc, result_cols, rows, table)
+
+    def _aggregate_multi_table(self, c, _cb):
+        """Somma (o aggrega) un valore per gruppo unendo PIU' tabelle dello stesso
+        database, anche con nomi colonna diversi. Ogni sorgente mappa la propria
+        colonna gruppo e valore, normalizzate via alias; i filtri (WHERE) sono
+        globali (stessi nomi colonna in tutte le tabelle) e applicati a ciascuna
+        sorgente. Confronto finale con soglia singola o intervallo ('tra')."""
+        sources = c.get("sources", [])
+        agg_function = c.get("agg_function", "SUM").upper()
+        operator = c.get("operator", ">")
+        threshold = c.get("threshold", 0)
+        conditions = c.get("conditions", [])
+        exclude_conditions = c.get("exclude_conditions", [])
+
+        if not sources:
+            return self._error("Specificare almeno una tabella sorgente.")
+        if agg_function not in ("SUM", "COUNT", "AVG", "MIN", "MAX"):
+            return self._error(f"Funzione aggregata non valida: {agg_function}")
+        is_count = agg_function == "COUNT"
+        for s in sources:
+            if not s.get("table") or not s.get("group_col"):
+                return self._error("Ogni sorgente richiede tabella e colonna gruppo.")
+            if not is_count and not s.get("value_col"):
+                return self._error("Ogni sorgente richiede la colonna valore (per SUM/AVG/MIN/MAX).")
+
+        # Filtri globali: stessi nomi colonna in tutte le tabelle -> stessa clausola
+        where_str, where_params = self._build_condition_clause(conditions, exclude_conditions)
+
+        subs, params = [], []
+        for s in sources:
+            if is_count:
+                sub = f"SELECT {_qi(s['group_col'])} AS grp FROM {_qi(s['table'])}"
+            else:
+                sub = f"SELECT {_qi(s['group_col'])} AS grp, {_qi(s['value_col'])} AS val FROM {_qi(s['table'])}"
+            if where_str:
+                sub += f" WHERE {where_str}"
+                params.extend(where_params)
+            subs.append(sub)
+
+        union = " UNION ALL ".join(subs)
+        agg_expr = "COUNT(*)" if is_count else f"{agg_function}(val)"
+        query = f"SELECT grp, {agg_expr} AS AggVal FROM ({union}) AS u GROUP BY grp"
+
+        is_range = str(operator).strip().lower() in ("tra", "between")
+        if is_range:
+            low = threshold
+            high = c.get("threshold_max", threshold)
+            try:
+                if float(high) < float(low):
+                    low, high = high, low
+            except (TypeError, ValueError):
+                pass
+            query += f" HAVING {agg_expr} BETWEEN ? AND ?"
+            params.extend([low, high])
+            having_desc = f"{agg_function} tra {low} e {high}"
+        else:
+            valid_ops = {"=", "<>", ">", ">=", "<", "<="}
+            if operator not in valid_ops:
+                return self._error(f"Operatore non valido: {operator}")
+            query += f" HAVING {agg_expr} {operator} ?"
+            params.append(threshold)
+            having_desc = f"{agg_function} {operator} {threshold}"
+
+        try:
+            cols, rows = self.db.fetch(query, params)
+        except Exception as e:
+            return self._error(f"Errore SQL: {e}\n\nQuery: {query}")
+
+        group_label = sources[0].get("group_col", "Gruppo")
+        result_cols = [group_label, f"{agg_function}({'*' if is_count else 'valore'})"]
+        tables_desc = ", ".join(s.get("table", "") for s in sources)
+        desc = f"Somma multi-tabella [{tables_desc}] | {having_desc}"
+        if conditions or exclude_conditions:
+            desc += " | " + self._describe_condition_sets(conditions, exclude_conditions)
+        return self._result("Soglia aggregata multi-tabella", desc, result_cols, rows,
+                            sources[0].get("table", ""))

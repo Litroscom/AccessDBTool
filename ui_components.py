@@ -3287,6 +3287,223 @@ class AggregateThresholdBuilder(ttk.Frame):
         for r in list(self._excl_rows):   self._rm_row(r, self._excl_rows)
 
 
+class AggregateMultiTableBuilder(ttk.Frame):
+    """Soglia Aggregata Multi-tabella: somma (o aggrega) un valore per gruppo
+    unendo PIU' tabelle dello stesso database, anche con nomi colonna diversi.
+    Ogni sorgente mappa la propria colonna gruppo e valore; i filtri sono
+    globali (stessi nomi colonna in tutte le tabelle)."""
+
+    _AGG_FUNCTIONS = ["SUM", "COUNT", "AVG", "MIN", "MAX"]
+    _OPERATORS = [">", ">=", "<", "<=", "=", "<>", "tra"]
+
+    def __init__(self, parent, db=None, on_table_change=None):
+        super().__init__(parent, padding=5)
+        self.db = db
+        self.on_table_change = on_table_change
+
+        ttk.Label(self, text="Tabelle sorgente (somma unita su più tabelle):",
+                  font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        ttk.Label(self, text="Per ogni tabella scegli la colonna gruppo (es. Diffusori) e "
+                             "la colonna valore (es. mh). I nomi possono differire tra tabelle.",
+                  foreground="gray").pack(anchor="w")
+        self._frm_sources = ttk.Frame(self)
+        self._frm_sources.pack(fill=tk.X, pady=2)
+        self._sources = []
+        ttk.Button(self, text="+ Aggiungi tabella", command=self._add_source).pack(anchor="w", pady=2)
+
+        agg = ttk.Frame(self)
+        agg.pack(fill=tk.X, pady=(8, 2))
+        ttk.Label(agg, text="Aggregazione:").pack(side=tk.LEFT)
+        self.var_agg_fn = tk.StringVar(value="SUM")
+        ttk.Combobox(agg, textvariable=self.var_agg_fn, values=self._AGG_FUNCTIONS,
+                     state="readonly", width=8).pack(side=tk.LEFT, padx=4)
+        ttk.Label(agg, text="Soglia:").pack(side=tk.LEFT, padx=(10, 2))
+        self.var_op = tk.StringVar(value=">=")
+        self.cmb_op = ttk.Combobox(agg, textvariable=self.var_op, values=self._OPERATORS,
+                                   state="readonly", width=6)
+        self.cmb_op.pack(side=tk.LEFT)
+        self.cmb_op.bind("<<ComboboxSelected>>", self._on_op_change)
+        self.var_threshold = tk.StringVar(value="0")
+        ttk.Entry(agg, textvariable=self.var_threshold, width=8).pack(side=tk.LEFT, padx=4)
+        self._lbl_and = ttk.Label(agg, text=" e ")
+        self.var_threshold_max = tk.StringVar(value="")
+        self._ent_threshold_max = ttk.Entry(agg, textvariable=self.var_threshold_max, width=8)
+        self._lbl_hint = ttk.Label(agg, text="(con 'tra' = intervallo X–Y)")
+        self._lbl_hint.pack(side=tk.LEFT, padx=8)
+
+        ttk.Separator(self, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        ttk.Label(self, text="Filtri globali (WHERE, stessi nomi colonna in tutte le tabelle):",
+                  font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        self._frm_filters = ttk.Frame(self)
+        self._frm_filters.pack(fill=tk.X, padx=4)
+        self._filter_rows = []
+        self._excl_rows = []
+        bf = ttk.Frame(self)
+        bf.pack(anchor="w", pady=3)
+        ttk.Button(bf, text="+ Filtro", command=self._add_filter).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="+ Esclusione", command=self._add_excl).pack(side=tk.LEFT, padx=2)
+
+    def _all_tables(self):
+        return self.db.tables if (self.db and getattr(self.db, "connected", False)) else []
+
+    def _filter_cols(self):
+        if self.db and self._sources and self._sources[0]["table"].get():
+            return self.db.columns(self._sources[0]["table"].get())
+        return []
+
+    def _refresh_filter_cols(self):
+        cols = self._filter_cols()
+        for r in self._filter_rows + self._excl_rows:
+            r["cmb_col"]["values"] = cols
+
+    def _add_source(self, table="", group_col="", value_col=""):
+        frm = ttk.Frame(self._frm_sources)
+        frm.pack(fill=tk.X, pady=1)
+        var_t = tk.StringVar(value=table)
+        cmb_t = ttk.Combobox(frm, textvariable=var_t, values=self._all_tables(),
+                             state="readonly", width=18)
+        cmb_t.pack(side=tk.LEFT, padx=2)
+        ttk.Label(frm, text="gruppo:").pack(side=tk.LEFT)
+        var_g = tk.StringVar(value=group_col)
+        cmb_g = ttk.Combobox(frm, textvariable=var_g, width=16)
+        cmb_g.pack(side=tk.LEFT, padx=2)
+        ttk.Label(frm, text="valore:").pack(side=tk.LEFT)
+        var_v = tk.StringVar(value=value_col)
+        cmb_v = ttk.Combobox(frm, textvariable=var_v, width=16)
+        cmb_v.pack(side=tk.LEFT, padx=2)
+        row = {"frm": frm, "table": var_t, "group": var_g, "value": var_v,
+               "cmb_g": cmb_g, "cmb_v": cmb_v}
+        cmb_t.bind("<<ComboboxSelected>>", lambda _e, r=row: self._refresh_source_cols(r))
+        ttk.Button(frm, text="✕", width=2, command=lambda r=row: self._remove_source(r)).pack(side=tk.LEFT)
+        self._sources.append(row)
+        if table:
+            self._refresh_source_cols(row)
+        return row
+
+    def _refresh_source_cols(self, row):
+        cols = self.db.columns(row["table"].get()) if (self.db and row["table"].get()) else []
+        row["cmb_g"]["values"] = cols
+        row["cmb_v"]["values"] = cols
+        self._refresh_filter_cols()
+
+    def _remove_source(self, row):
+        row["frm"].destroy()
+        self._sources.remove(row)
+
+    def _on_op_change(self, _evt=None):
+        if self.var_op.get() == "tra":
+            self._lbl_and.pack(side=tk.LEFT, before=self._lbl_hint)
+            self._ent_threshold_max.pack(side=tk.LEFT, before=self._lbl_hint)
+        else:
+            self._ent_threshold_max.pack_forget()
+            self._lbl_and.pack_forget()
+
+    def _add_row(self, target_list, label, col="", op="=", val=""):
+        cols = self._filter_cols()
+        frm = ttk.Frame(self._frm_filters)
+        frm.pack(fill=tk.X, pady=1)
+        logic_var = tk.StringVar(value="AND")
+        if target_list:
+            ttk.Combobox(frm, textvariable=logic_var, values=constants.LOGIC_OPS,
+                         state="readonly", width=5).pack(side=tk.LEFT, padx=2)
+        else:
+            ttk.Label(frm, text=label, width=7).pack(side=tk.LEFT, padx=2)
+        var_col = tk.StringVar(value=col)
+        cmb_col = ttk.Combobox(frm, textvariable=var_col, values=cols, width=16)
+        cmb_col.pack(side=tk.LEFT, padx=2)
+        var_op = tk.StringVar(value=op)
+        ttk.Combobox(frm, textvariable=var_op,
+                     values=["=", "<>", ">", ">=", "<", "<=", "LIKE", "NOT LIKE", "IS NULL", "IS NOT NULL"],
+                     state="readonly", width=10).pack(side=tk.LEFT, padx=2)
+        var_val = tk.StringVar(value=val)
+        ttk.Entry(frm, textvariable=var_val, width=14).pack(side=tk.LEFT, padx=2)
+        d = {"frm": frm, "logic": logic_var, "col": var_col, "cmb_col": cmb_col, "op": var_op, "val": var_val}
+        ttk.Button(frm, text="✕", width=2, command=lambda: self._rm_row(d, target_list)).pack(side=tk.LEFT)
+        target_list.append(d)
+
+    def _add_filter(self): self._add_row(self._filter_rows, "FILTRO")
+    def _add_excl(self):   self._add_row(self._excl_rows, "ESCLUDI")
+
+    def _rm_row(self, r, lst):
+        r["frm"].destroy()
+        lst.remove(r)
+
+    def _parse_rows(self, lst):
+        return [{"column": r["col"].get(), "operator": r["op"].get(), "value": r["val"].get(), "logic": r["logic"].get()}
+                for r in lst if r["col"].get()]
+
+    def validate(self):
+        real = [r for r in self._sources if r["table"].get() and r["group"].get()]
+        if not real:
+            return False, "Aggiungere almeno una tabella con la colonna gruppo."
+        if self.var_agg_fn.get() != "COUNT":
+            for r in real:
+                if not r["value"].get():
+                    return False, "Selezionare la colonna valore in ogni tabella (per SUM/AVG/MIN/MAX)."
+        try:
+            float(self.var_threshold.get())
+        except ValueError:
+            return False, "La soglia deve essere un numero."
+        if self.var_op.get() == "tra":
+            try:
+                float(self.var_threshold_max.get())
+            except ValueError:
+                return False, "Con l'operatore 'tra' inserire anche il secondo valore (numero)."
+        return True, ""
+
+    def get_config(self):
+        sources = []
+        for r in self._sources:
+            t = r["table"].get().strip()
+            if not t:
+                continue
+            sources.append({
+                "table": t,
+                "group_col": r["group"].get().strip(),
+                "value_col": r["value"].get().strip(),
+            })
+        cfg = {
+            "sources": sources,
+            "agg_function": self.var_agg_fn.get(),
+            "operator": self.var_op.get(),
+            "threshold": float(self.var_threshold.get()) if self.var_threshold.get() else 0,
+            "conditions": self._parse_rows(self._filter_rows),
+            "exclude_conditions": self._parse_rows(self._excl_rows),
+        }
+        if self.var_op.get() == "tra":
+            cfg["threshold_max"] = (
+                float(self.var_threshold_max.get()) if self.var_threshold_max.get() else cfg["threshold"]
+            )
+        return cfg
+
+    def set_config(self, c):
+        for r in list(self._sources):
+            self._remove_source(r)
+        for s in c.get("sources", []):
+            self._add_source(s.get("table", ""), s.get("group_col", ""), s.get("value_col", ""))
+        if not self._sources:
+            self._add_source()
+        self.var_agg_fn.set(c.get("agg_function", "SUM"))
+        self.var_op.set(c.get("operator", ">="))
+        self.var_threshold.set(str(c.get("threshold", 0)))
+        if "threshold_max" in c:
+            self.var_threshold_max.set(str(c.get("threshold_max", "")))
+        self._on_op_change()
+        for r in list(self._filter_rows): self._rm_row(r, self._filter_rows)
+        for r in list(self._excl_rows):   self._rm_row(r, self._excl_rows)
+        for cond in c.get("conditions", []):
+            self._add_row(self._filter_rows, "FILTRO", cond["column"], cond["operator"], cond.get("value", ""))
+        for cond in c.get("exclude_conditions", []):
+            self._add_row(self._excl_rows, "ESCLUDI", cond["column"], cond["operator"], cond.get("value", ""))
+
+    def clear(self):
+        for r in list(self._sources): self._remove_source(r)
+        self.var_threshold.set("0")
+        self.var_threshold_max.set("")
+        for r in list(self._filter_rows): self._rm_row(r, self._filter_rows)
+        for r in list(self._excl_rows):   self._rm_row(r, self._excl_rows)
+
+
 # ---------------------------------------------------------------------------
 # VALUE COMPARISON BUILDER
 # Confronto valori multi-condizione: riusa MultiConditionBuilder completamente.

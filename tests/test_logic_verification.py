@@ -359,6 +359,56 @@ class ConditionExecutorSmokeTests(unittest.TestCase):
         self.assertIn("HAVING SUM([mh]) >= ?", sql)
         self.assertEqual(params, [14])
 
+    def test_aggregate_multi_table_between(self):
+        db = FakeDB()
+        db.queue_fetch(["grp", "AggVal"], [["Mario", 15]])
+        result = ConditionExecutor(db).run({
+            "type": "aggregate_multi_table_threshold",
+            "sources": [
+                {"table": "Casa", "group_col": "Diffusori", "value_col": "mh"},
+                {"table": "Quartiere", "group_col": "Diffusore", "value_col": "Ore"},
+            ],
+            "agg_function": "SUM",
+            "operator": "tra", "threshold": 14, "threshold_max": 16,
+            "conditions": [{"column": "Mese", "operator": "=", "value": "giu", "logic": "AND"}],
+        })
+        sql, params = db.fetch_calls[0]
+        self.assertIn("UNION ALL", sql)
+        self.assertIn("[Diffusori] AS grp", sql)
+        self.assertIn("[mh] AS val", sql)
+        self.assertIn("[Quartiere]", sql)
+        self.assertIn("[Ore] AS val", sql)
+        self.assertIn("SUM(val)", sql)
+        self.assertIn("BETWEEN ? AND ?", sql)
+        # filtro globale applicato a entrambe le sorgenti + i 2 estremi
+        self.assertEqual(params, ["giu", "giu", 14, 16])
+        self.assertEqual(result["count"], 1)
+
+    def test_aggregate_multi_table_single_operator(self):
+        db = FakeDB()
+        db.queue_fetch(["grp", "AggVal"], [["A", 30]])
+        ConditionExecutor(db).run({
+            "type": "aggregate_multi_table_threshold",
+            "sources": [
+                {"table": "T1", "group_col": "G", "value_col": "V"},
+                {"table": "T2", "group_col": "G", "value_col": "V"},
+            ],
+            "agg_function": "SUM", "operator": ">=", "threshold": 14,
+        })
+        sql, params = db.fetch_calls[0]
+        self.assertIn("UNION ALL", sql)
+        self.assertIn("HAVING SUM(val) >= ?", sql)
+        self.assertEqual(params, [14])
+
+    def test_aggregate_multi_table_requires_sources(self):
+        db = FakeDB()
+        result = ConditionExecutor(db).run({
+            "type": "aggregate_multi_table_threshold", "sources": [],
+            "agg_function": "SUM", "operator": ">", "threshold": 1,
+        })
+        self.assertEqual(result["count"], 0)
+        self.assertIn("sorgente", result["description"].lower() + result.get("title", "").lower())
+
     def test_linked_table_intersection_smoke(self):
         db = FakeDB()
         db.queue_fetch(["ID"], [[1]])

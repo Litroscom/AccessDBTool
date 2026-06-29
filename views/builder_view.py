@@ -489,6 +489,12 @@ class BuilderView(ttk.Frame):
             except Exception as _e:
                 logger.error(f"AggregateThresholdBuilder init error: {_e}")
                 self.state.status.set(f"Errore builder: {_e}")
+        elif ctype == "aggregate_multi_table_threshold":
+            try:
+                self.state.active_builder = ui_components.AggregateMultiTableBuilder(parent, db, self._on_builder_table_change)
+            except Exception as _e:
+                logger.error(f"AggregateMultiTableBuilder init error: {_e}")
+                self.state.status.set(f"Errore builder: {_e}")
 
     def _show_base(self):
         base = self._sections["base"]

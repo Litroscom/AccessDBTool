@@ -19,7 +19,7 @@ from ui_components import (
     CrossTableBuilder, FormulaBuilder, ConcatSimilarityBuilder,
     LinkedTableBuilder, FormatValidationBuilder, DailyCoverageBuilder,
     MandatoryRecordBuilder, DependentConditionBuilder, RowCrossColumnBuilder,
-    LookupValidationBuilder, AggregateThresholdBuilder,
+    LookupValidationBuilder, AggregateThresholdBuilder, AggregateMultiTableBuilder,
 )
 import constants
 from storage import ConditionStore
@@ -483,6 +483,27 @@ class AggregateRangeBuilderTests(unittest.TestCase):
         cfg = b.get_config()
         self.assertEqual(cfg["operator"], ">=")
         self.assertNotIn("threshold_max", cfg)
+
+    def test_multi_table_builder_round_trip(self):
+        db = FakeDB()
+        b = AggregateMultiTableBuilder(ttk.Frame(self.root), db, on_table_change=None)
+        seed = {
+            "sources": [
+                {"table": "Clienti", "group_col": "Nome", "value_col": "Citta"},
+                {"table": "Ordini", "group_col": "ClienteID", "value_col": "Importo"},
+            ],
+            "agg_function": "SUM", "operator": "tra",
+            "threshold": 14, "threshold_max": 16,
+            "conditions": [{"column": "Mese", "operator": "=", "value": "giu", "logic": "AND"}],
+        }
+        b.set_config(seed)
+        cfg = b.get_config()
+        self.assertEqual(len(cfg["sources"]), 2)
+        self.assertEqual(cfg["sources"][0], {"table": "Clienti", "group_col": "Nome", "value_col": "Citta"})
+        self.assertEqual(cfg["sources"][1]["value_col"], "Importo")
+        self.assertEqual(cfg["operator"], "tra")
+        self.assertEqual(cfg["threshold_max"], 16)
+        self.assertEqual(cfg["conditions"][0]["column"], "Mese")
 
 
 class ConditionManagerBulkReplaceTests(unittest.TestCase):
