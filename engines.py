@@ -1143,7 +1143,8 @@ class ConditionExecutor:
             return self._error("Specificare la colonna da aggregare (richiesta per SUM/AVG/MIN/MAX).")
 
         valid_ops = {"=", "<>", ">", ">=", "<", "<="}
-        if operator not in valid_ops:
+        is_range = str(operator).strip().lower() in ("tra", "between")
+        if not is_range and operator not in valid_ops:
             return self._error(f"Operatore non valido: {operator}")
 
         # Costruzione SELECT
@@ -1160,8 +1161,22 @@ class ConditionExecutor:
         query = f"SELECT {sel} FROM {_qi(table)}"
         if where_str:
             query += f" WHERE {where_str}"
-        query += f" GROUP BY {group_cols_sql} HAVING {agg_expr} {operator} ?"
-        params.append(threshold)
+
+        if is_range:
+            low = threshold
+            high = c.get("threshold_max", threshold)
+            try:
+                if float(high) < float(low):
+                    low, high = high, low
+            except (TypeError, ValueError):
+                pass
+            query += f" GROUP BY {group_cols_sql} HAVING {agg_expr} BETWEEN ? AND ?"
+            params.extend([low, high])
+            having_desc = f"{agg_function}({agg_column or '*'}) tra {low} e {high}"
+        else:
+            query += f" GROUP BY {group_cols_sql} HAVING {agg_expr} {operator} ?"
+            params.append(threshold)
+            having_desc = f"{agg_function}({agg_column or '*'}) {operator} {threshold}"
 
         try:
             cols, rows = self.db.fetch(query, params)
@@ -1169,10 +1184,8 @@ class ConditionExecutor:
             return self._error(f"Errore SQL: {e}\n\nQuery: {query}")
 
         result_cols = list(group_by) + [f"{agg_function}({agg_column or '*'})"]
-        agg_label = f"{agg_function}({agg_column or '*'})"
         desc = (
-            f"Raggruppa per [{', '.join(group_by)}] | "
-            f"{agg_label} {operator} {threshold}"
+            f"Raggruppa per [{', '.join(group_by)}] | {having_desc}"
         )
         if conditions or exclude_conditions:
             desc += " | " + self._describe_condition_sets(conditions, exclude_conditions)

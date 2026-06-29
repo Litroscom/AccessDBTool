@@ -3062,7 +3062,7 @@ class AggregateThresholdBuilder(ttk.Frame):
     Raggruppa per N colonne, calcola SUM/COUNT/AVG/MIN/MAX e segnala i gruppi fuori soglia."""
 
     _AGG_FUNCTIONS = ["SUM", "COUNT", "AVG", "MIN", "MAX"]
-    _OPERATORS = [">", ">=", "<", "<=", "=", "<>"]
+    _OPERATORS = [">", ">=", "<", "<=", "=", "<>", "tra"]
 
     def __init__(self, parent, db=None, on_table_change=None):
         super().__init__(parent, padding=5)
@@ -3116,11 +3116,18 @@ class AggregateThresholdBuilder(ttk.Frame):
         thr_frm.grid(row=4, column=1, sticky="ew", padx=5)
 
         self.var_op = tk.StringVar(value=">")
-        ttk.Combobox(thr_frm, textvariable=self.var_op, values=self._OPERATORS,
-                     state="readonly", width=5).pack(side=tk.LEFT, padx=(0, 4))
+        self.cmb_op = ttk.Combobox(thr_frm, textvariable=self.var_op, values=self._OPERATORS,
+                                   state="readonly", width=6)
+        self.cmb_op.pack(side=tk.LEFT, padx=(0, 4))
+        self.cmb_op.bind("<<ComboboxSelected>>", self._on_op_change)
         self.var_threshold = tk.StringVar(value="0")
-        ttk.Entry(thr_frm, textvariable=self.var_threshold, width=14).pack(side=tk.LEFT)
-        ttk.Label(thr_frm, text="(es. 48 per ore settimanali)").pack(side=tk.LEFT, padx=8)
+        ttk.Entry(thr_frm, textvariable=self.var_threshold, width=10).pack(side=tk.LEFT)
+        # Secondo estremo, visibile solo con operatore "tra" (intervallo)
+        self._lbl_and = ttk.Label(thr_frm, text=" e ")
+        self.var_threshold_max = tk.StringVar(value="")
+        self._ent_threshold_max = ttk.Entry(thr_frm, textvariable=self.var_threshold_max, width=10)
+        self._lbl_thr_hint = ttk.Label(thr_frm, text="(es. 48; con 'tra' = intervallo X–Y)")
+        self._lbl_thr_hint.pack(side=tk.LEFT, padx=8)
 
         # Note funzione COUNT
         self._lbl_count_note = ttk.Label(self,
@@ -3148,6 +3155,15 @@ class AggregateThresholdBuilder(ttk.Frame):
         else:
             self.cmb_agg_col.config(state="normal")
             self._lbl_count_note.grid_remove()
+
+    def _on_op_change(self, _evt=None):
+        """Mostra il secondo estremo solo per l'operatore 'tra' (intervallo)."""
+        if self.var_op.get() == "tra":
+            self._lbl_and.pack(side=tk.LEFT, before=self._lbl_thr_hint)
+            self._ent_threshold_max.pack(side=tk.LEFT, before=self._lbl_thr_hint)
+        else:
+            self._ent_threshold_max.pack_forget()
+            self._lbl_and.pack_forget()
 
     def _on_table_sel(self, _evt=None):
         table = self.var_table.get()
@@ -3216,10 +3232,15 @@ class AggregateThresholdBuilder(ttk.Frame):
             float(self.var_threshold.get())
         except ValueError:
             return False, "La soglia deve essere un numero."
+        if self.var_op.get() == "tra":
+            try:
+                float(self.var_threshold_max.get())
+            except ValueError:
+                return False, "Con l'operatore 'tra' inserire anche il secondo valore (numero)."
         return True, ""
 
     def get_config(self):
-        return {
+        cfg = {
             "table":           self.var_table.get(),
             "group_by":        list(self._group_by),
             "agg_function":    self.var_agg_fn.get(),
@@ -3229,6 +3250,11 @@ class AggregateThresholdBuilder(ttk.Frame):
             "conditions":      self._parse_rows(self._filter_rows),
             "exclude_conditions": self._parse_rows(self._excl_rows),
         }
+        if self.var_op.get() == "tra":
+            cfg["threshold_max"] = (
+                float(self.var_threshold_max.get()) if self.var_threshold_max.get() else cfg["threshold"]
+            )
+        return cfg
 
     def set_config(self, c):
         self.var_table.set(c.get("table") or c.get("source_table", ""))
@@ -3241,6 +3267,9 @@ class AggregateThresholdBuilder(ttk.Frame):
         self.var_agg_col.set(c.get("agg_column", ""))
         self.var_op.set(c.get("operator", ">"))
         self.var_threshold.set(str(c.get("threshold", 0)))
+        if "threshold_max" in c:
+            self.var_threshold_max.set(str(c.get("threshold_max", "")))
+        self._on_op_change()
         for r in list(self._filter_rows): self._rm_row(r, self._filter_rows)
         for r in list(self._excl_rows):   self._rm_row(r, self._excl_rows)
         for cond in c.get("conditions", []):

@@ -449,6 +449,42 @@ class RecordEditorDialogTests(unittest.TestCase):
         self.assertIsNone(new["Amount"])  # numerico svuotato -> NULL, non ""
 
 
+class AggregateRangeBuilderTests(unittest.TestCase):
+    """Operatore 'tra' (intervallo) nel builder Soglia Aggregata."""
+
+    def setUp(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+
+    def tearDown(self):
+        self.root.destroy()
+
+    def test_between_operator_round_trip(self):
+        db = FakeDB()
+        b = AggregateThresholdBuilder(ttk.Frame(self.root), db, on_table_change=None)
+        b.set_config({
+            "table": "casa-quartiere", "group_by": ["Diffusori"],
+            "agg_function": "SUM", "agg_column": "mh",
+            "operator": "tra", "threshold": 14, "threshold_max": 16,
+        })
+        cfg = b.get_config()
+        self.assertEqual(cfg["operator"], "tra")
+        self.assertEqual(cfg["threshold"], 14)
+        self.assertEqual(cfg["threshold_max"], 16)
+        self.assertEqual(cfg["group_by"], ["Diffusori"])
+
+    def test_single_operator_has_no_threshold_max(self):
+        db = FakeDB()
+        b = AggregateThresholdBuilder(ttk.Frame(self.root), db, on_table_change=None)
+        b.set_config({
+            "table": "T", "group_by": ["G"], "agg_function": "SUM",
+            "agg_column": "mh", "operator": ">=", "threshold": 14,
+        })
+        cfg = b.get_config()
+        self.assertEqual(cfg["operator"], ">=")
+        self.assertNotIn("threshold_max", cfg)
+
+
 class ConditionManagerBulkReplaceTests(unittest.TestCase):
     """Sostituzione massiva valori dal 'Gestione Condizioni' (#28), headless:
     esercita plan+apply senza i dialog interattivi."""

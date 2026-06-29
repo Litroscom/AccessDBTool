@@ -316,6 +316,49 @@ class ConditionExecutorSmokeTests(unittest.TestCase):
         self.assertIn("[ID]", sql)
         self.assertEqual(params, ["7"])
 
+    def test_aggregate_threshold_between_range(self):
+        db = FakeDB()
+        db.queue_fetch(["Diffusori", "AggVal"], [["Mario", 15]])
+        result = ConditionExecutor(db).run({
+            "type": "aggregate_threshold_check",
+            "table": "casa-quartiere",
+            "group_by": ["Diffusori"],
+            "agg_function": "SUM",
+            "agg_column": "mh",
+            "operator": "tra",
+            "threshold": 14,
+            "threshold_max": 16,
+        })
+        sql, params = db.fetch_calls[0]
+        self.assertIn("BETWEEN ? AND ?", sql)
+        self.assertIn("SUM([mh])", sql)
+        self.assertEqual(params, [14, 16])
+        self.assertEqual(result["count"], 1)
+
+    def test_aggregate_threshold_between_swaps_reversed_bounds(self):
+        db = FakeDB()
+        db.queue_fetch(["Diffusori", "AggVal"], [])
+        ConditionExecutor(db).run({
+            "type": "aggregate_threshold_check",
+            "table": "T", "group_by": ["G"], "agg_function": "SUM",
+            "agg_column": "mh", "operator": "tra",
+            "threshold": 16, "threshold_max": 14,
+        })
+        _sql, params = db.fetch_calls[0]
+        self.assertEqual(params, [14, 16])  # ordina min, max
+
+    def test_aggregate_threshold_single_operator_still_works(self):
+        db = FakeDB()
+        db.queue_fetch(["G", "AggVal"], [["x", 50]])
+        ConditionExecutor(db).run({
+            "type": "aggregate_threshold_check",
+            "table": "T", "group_by": ["G"], "agg_function": "SUM",
+            "agg_column": "mh", "operator": ">=", "threshold": 14,
+        })
+        sql, params = db.fetch_calls[0]
+        self.assertIn("HAVING SUM([mh]) >= ?", sql)
+        self.assertEqual(params, [14])
+
     def test_linked_table_intersection_smoke(self):
         db = FakeDB()
         db.queue_fetch(["ID"], [[1]])
