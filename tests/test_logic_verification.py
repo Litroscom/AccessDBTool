@@ -992,6 +992,21 @@ class DirectRecordEditTests(unittest.TestCase):
         self.assertFalse(ctrl.result_supports_direct_update())
 
 
+class TableDiscoveryFilterTests(unittest.TestCase):
+    """La scoperta tabelle deve includere le tabelle COLLEGATE (linked) e
+    escludere solo quelle di sistema (#35)."""
+
+    def test_includes_normal_and_linked_excludes_system(self):
+        from db_manager import DatabaseManager as DM
+        self.assertTrue(DM._is_user_table("Clienti", "TABLE"))
+        self.assertTrue(DM._is_user_table("CasaCollegata", "LINK"))     # collegata
+        self.assertTrue(DM._is_user_table("CasaCollegata", "TABLE"))    # collegata vista come TABLE
+        self.assertTrue(DM._is_user_table("Q_Report", "VIEW"))          # query salvata
+        self.assertFalse(DM._is_user_table("MSysObjects", "SYSTEM TABLE"))
+        self.assertFalse(DM._is_user_table("~TMPCLP", "TABLE"))
+        self.assertFalse(DM._is_user_table("Pippo", "ACCESS TABLE"))
+
+
 class SafeSingleRecordUpdateTests(unittest.TestCase):
     """update_record_safe garantisce che l'UPDATE colpisca ESATTAMENTE 1 record:
     verifica COUNT prima di scrivere, altrimenti rifiuta senza toccare nulla."""

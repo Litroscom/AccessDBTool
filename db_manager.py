@@ -87,15 +87,31 @@ class DatabaseManager:
             self.table_columns = {}
             self.table_pks = {}
 
+    @staticmethod
+    def _is_user_table(name, table_type=""):
+        """True per tabelle utente da mostrare, incluse le tabelle COLLEGATE
+        (linked) e le query salvate. Esclude solo le tabelle di sistema."""
+        n = str(name or "")
+        if n.startswith("MSys") or n.startswith("~"):
+            return False
+        t = str(table_type or "").strip().upper()
+        if t in ("SYSTEM TABLE", "ACCESS TABLE"):
+            return False
+        return True
+
     def _discover(self):
         self.tables = []
         self.table_columns = {}
         self.table_pks = {}
         try:
             cur = self.conn.cursor()
-            for row in cur.tables(tableType="TABLE"):
+            # Nessun filtro su tableType: includiamo anche le tabelle COLLEGATE
+            # (linked), che alcuni driver Access riportano con type diverso da
+            # "TABLE". Escludiamo solo le tabelle di sistema.
+            for row in cur.tables():
                 name = row.table_name
-                if name.startswith("MSys") or name.startswith("~"):
+                ttype = getattr(row, "table_type", "")
+                if not self._is_user_table(name, ttype):
                     continue
                 self.tables.append(name)
             self.tables.sort()
