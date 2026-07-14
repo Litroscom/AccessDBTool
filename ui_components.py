@@ -201,23 +201,33 @@ class ColumnSelector(ttk.LabelFrame):
 
 class MultiConditionBuilder(ttk.LabelFrame):
     def __init__(self, parent, db, on_table_change=None, title="Condizioni (AND/OR)",
-                 show_conditions=True):
+                 show_conditions=True, show_table=True):
         super().__init__(parent, text=title, padding=5)
         self.db = db
         self.on_table_change = on_table_change
         self.condition_rows = []
         self.exclude_rows = []
         self._show_conditions = show_conditions
+        self._show_table = show_table
         
         # --- Tabella Sorgente ---
         top_frm = ttk.Frame(self)
         top_frm.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(top_frm, text="Tabella Sorgente:").pack(side=tk.LEFT, padx=2)
         self.var_table = tk.StringVar()
-        self.cmb_table = ttk.Combobox(top_frm, textvariable=self.var_table, state="readonly", width=30)
-        self.cmb_table.pack(side=tk.LEFT, padx=5)
-        if self.db and self.db.connected: self.cmb_table["values"] = self.db.tables
-        self.cmb_table.bind("<<ComboboxSelected>>", self._on_table_sel)
+        if show_table:
+            ttk.Label(top_frm, text="Tabella Sorgente:").pack(side=tk.LEFT, padx=2)
+            self.cmb_table = ttk.Combobox(top_frm, textvariable=self.var_table, state="readonly", width=30)
+            self.cmb_table.pack(side=tk.LEFT, padx=5)
+            if self.db and self.db.connected: self.cmb_table["values"] = self.db.tables
+            self.cmb_table.bind("<<ComboboxSelected>>", self._on_table_sel)
+        else:
+            # Nei filtri dell'accordion la tabella deve essere quella del
+            # builder principale: offrire un secondo selettore causava filtri
+            # costruiti su una tabella ed eseguiti su un'altra.
+            ttk.Label(top_frm, text="Tabella sorgente (dal builder):").pack(side=tk.LEFT, padx=2)
+            ttk.Label(top_frm, textvariable=self.var_table,
+                      font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=5)
+            self.cmb_table = None
         
         self._current_table = ""
         self._rows_frame = ttk.Frame(self)
@@ -255,8 +265,12 @@ class MultiConditionBuilder(ttk.LabelFrame):
         cols = self.db.columns(self._current_table) if self._current_table and self.db else []
         for row in self.condition_rows:
             row["col_combo"]["values"] = cols
+            if row["column"].get() and row["column"].get() not in cols:
+                row["column"].set("")
         for row in self.exclude_rows:
             row["col_combo"]["values"] = cols
+            if row["column"].get() and row["column"].get() not in cols:
+                row["column"].set("")
         if self.on_table_change: self.on_table_change(self._current_table)
 
     def set_table(self, table):
@@ -1459,6 +1473,7 @@ class FormulaBuilder(ttk.Frame):
             " > 0  (Maggiore di)",
             " <> 'Valore'  (Diverso da)",
             "LEN([]) > 5  (Lunghezza testo)",
+            "(  (Apri gruppo)", ")  (Chiudi gruppo)",
             " AND ", " OR "
         ]
         self.cmb_tpl = ttk.Combobox(r2, textvariable=self.var_tpl, values=tpls, state="readonly", width=35)
@@ -1468,6 +1483,11 @@ class FormulaBuilder(ttk.Frame):
 
         # --- Formula Reale ---
         ttk.Label(self, text="Clausola SQL WHERE finale (modificabile a mano):").pack(anchor=tk.W, pady=(5,0))
+        ttk.Label(
+            self,
+            text="Quando combini AND e OR usa le parentesi: Access valuta AND prima di OR.",
+            foreground="gray", font=("Segoe UI", 8, "italic"),
+        ).pack(anchor=tk.W)
         self.txt = tk.Text(self, height=4, font=("Consolas", 10))
         self.txt.pack(fill=tk.X, pady=2)
         actions = ttk.Frame(self)

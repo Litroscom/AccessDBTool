@@ -20,6 +20,7 @@ from ui_components import (
     LinkedTableBuilder, FormatValidationBuilder, DailyCoverageBuilder,
     MandatoryRecordBuilder, DependentConditionBuilder, RowCrossColumnBuilder,
     LookupValidationBuilder, AggregateThresholdBuilder, AggregateMultiTableBuilder,
+    MultiConditionBuilder,
 )
 import constants
 from storage import ConditionStore
@@ -138,6 +139,23 @@ class BuilderRoundTripTests(unittest.TestCase):
         finally:
             root.destroy()
 
+    def test_filter_builder_inherits_source_table_and_drops_invalid_columns(self):
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            builder = MultiConditionBuilder(root, FakeDB(), show_table=False)
+            builder.set_table("Clienti")
+            builder._add_row()
+            builder.condition_rows[0]["column"].set("Citta")
+            builder.condition_rows[0]["operator"].set("=  (Uguale)")
+            builder.set_table("Ordini")
+
+            self.assertIsNone(builder.cmb_table)
+            self.assertEqual(builder.var_table.get(), "Ordini")
+            self.assertEqual(builder.get_conditions(), [])
+        finally:
+            root.destroy()
+
 
 class LibraryFlowTests(unittest.TestCase):
     """Verifica save_to_lib / load_cond_into_builder / update_to_lib."""
@@ -145,8 +163,20 @@ class LibraryFlowTests(unittest.TestCase):
     def setUp(self):
         self.root = tk.Tk()
         self.root.withdraw()
+        # I flussi della libreria mostrano notifiche di conferma: nei test
+        # headless devono essere non bloccanti.
+        from tkinter import messagebox
+        self._messagebox_handlers = {
+            name: getattr(messagebox, name)
+            for name in ("showinfo", "showwarning", "showerror")
+        }
+        for name in self._messagebox_handlers:
+            setattr(messagebox, name, lambda *args, **kwargs: None)
 
     def tearDown(self):
+        from tkinter import messagebox
+        for name, handler in self._messagebox_handlers.items():
+            setattr(messagebox, name, handler)
         self.root.destroy()
 
     def _make_state(self, tmp):
@@ -243,7 +273,12 @@ class AppBuilderIntegrationTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        cls.app.destroy()
+        # ttkbootstrap conserva riferimenti globali agli stili. Manteniamo la
+        # root dell'app fino al termine del processo di test, ma rilasciamo
+        # comunque le risorse applicative; il processo la distruggera' alla
+        # fine senza contaminare i test GUI successivi.
+        cls.app.app_ctrl.stop_monitor()
+        cls.app.db_ctrl.close_db()
 
     def _load_and_sync(self, cond):
         app = self.app

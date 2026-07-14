@@ -306,7 +306,14 @@ class ConditionExecutor:
         return {"title": title, "description": desc, "columns": cols, "rows": rows, "count": len(rows), "source_table": table}
 
     def _build_where(self, conditions, alias="", skip_regex=False):
-        where_expr, params = "", []
+        """Costruisce una WHERE rispettando la precedenza SQL (AND prima di OR).
+
+        La logica e' memorizzata sulla riga successiva alla prima: ``A OR B
+        AND C`` deve quindi diventare ``A OR (B AND C)``, non ``(A OR B)
+        AND C``.  Raggruppare esplicitamente le clausole rende il risultato
+        uguale sia su Access sia nel filtro Python usato per le regex.
+        """
+        and_groups, current_group, params = [], [], []
         prefix = alias + "." if alias else ""
         for cond in conditions:
             col, op, val = cond["column"], cond["operator"], cond.get("value", "")
@@ -333,11 +340,29 @@ class ConditionExecutor:
                 clause = prefix + _qi(col) + " " + current_op + " ?"
                 params.append(val_param)
             
-            if not where_expr:
-                where_expr = clause
+            if not current_group:
+                current_group.append(clause)
+                continue
+
+            # La UI permette solo AND/OR, ma le condizioni possono anche
+            # provenire da un file JSON importato: non interpolare mai altro
+            # testo nella query.
+            logic = str(cond.get("logic", "AND") or "AND").upper()
+            if logic == "OR":
+                and_groups.append(current_group)
+                current_group = [clause]
             else:
-                logic = cond.get("logic", "AND")
-                where_expr = f"({where_expr} {logic} {clause})"
+                current_group.append(clause)
+
+        if current_group:
+            and_groups.append(current_group)
+        if not and_groups:
+            return "", params
+
+        group_sql = ["(" + " AND ".join(group) + ")" for group in and_groups]
+        where_expr = " OR ".join(group_sql)
+        if len(group_sql) > 1:
+            where_expr = "(" + where_expr + ")"
         return where_expr, params
 
     def _build_condition_clause(self, conditions, exclude_conditions=None, alias="", skip_regex=False):
@@ -389,12 +414,22 @@ class ConditionExecutor:
         return output_cols, projected_rows
 
     def _describe_conditions(self, conditions):
-        parts = []
-        for cond in conditions:
+        """Riepilogo leggibile con gli stessi raggruppamenti della WHERE."""
+        groups, current_group = [], []
+        for cond in conditions or []:
             col, op, val = cond["column"], cond["operator"], cond.get("value", "")
-            if op in ("IS NULL", "IS NOT NULL"): parts.append("[" + col + "] " + op)
-            else: parts.append("[" + col + "] " + op + " " + str(val))
-        return " | ".join(parts)
+            part = "[" + col + "] " + op if op in ("IS NULL", "IS NOT NULL") else "[" + col + "] " + op + " " + str(val)
+            if not current_group:
+                current_group.append(part)
+            elif str(cond.get("logic", "AND") or "AND").upper() == "OR":
+                groups.append(current_group)
+                current_group = [part]
+            else:
+                current_group.append(part)
+        if current_group:
+            groups.append(current_group)
+        rendered = ["(" + " AND ".join(group) + ")" for group in groups]
+        return " OR ".join(rendered)
 
     def _describe_condition_sets(self, conditions, exclude_conditions=None):
         include_desc = self._describe_conditions(conditions or [])
@@ -591,15 +626,17 @@ class ConditionExecutor:
 
         if not results:
             return True
-        # Combina con logica AND/OR
-        # La prima condizione non ha logica (implicita AND)
-        final = results[0]
+        # Stessa precedenza della WHERE SQL: AND prima di OR.
+        or_groups = []
+        current_group = results[0]
         for i in range(1, len(results)):
-            if logics[i] == "OR":
-                final = final or results[i]
-            else:  # AND
-                final = final and results[i]
-        return final
+            if str(logics[i] or "AND").upper() == "OR":
+                or_groups.append(current_group)
+                current_group = results[i]
+            else:
+                current_group = current_group and results[i]
+        or_groups.append(current_group)
+        return any(or_groups)
 
     def _row_matches_condition_sets(self, row, cols, conditions=None, exclude_conditions=None):
         include_conditions = conditions or []

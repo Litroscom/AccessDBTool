@@ -188,15 +188,27 @@ class DummyExecutor:
 
 
 class ConditionExecutorSmokeTests(unittest.TestCase):
-    def test_build_where_preserves_left_to_right_logic(self):
+    def test_build_where_uses_sql_and_precedence(self):
         executor = ConditionExecutor(FakeDB())
         where, params = executor._build_where([
             {"column": "A", "operator": "=", "value": "1", "logic": "AND"},
             {"column": "B", "operator": "=", "value": "1", "logic": "OR"},
             {"column": "C", "operator": "=", "value": "1", "logic": "AND"},
         ])
-        self.assertEqual(where, "(([A] = ? OR [B] = ?) AND [C] = ?)")
+        self.assertEqual(where, "(([A] = ?) OR ([B] = ? AND [C] = ?))")
         self.assertEqual(params, ["1", "1", "1"])
+
+    def test_python_conditions_use_the_same_and_precedence_as_sql(self):
+        executor = ConditionExecutor(FakeDB())
+        conditions = [
+            {"column": "A", "operator": "=", "value": "1", "logic": "AND"},
+            {"column": "B", "operator": "=", "value": "1", "logic": "OR"},
+            {"column": "C", "operator": "=", "value": "1", "logic": "AND"},
+        ]
+        # A OR (B AND C): la prima colonna basta anche se C e' falsa.
+        self.assertTrue(executor._apply_conditions_python([1, 0, 0], ["A", "B", "C"], conditions))
+        self.assertFalse(executor._apply_conditions_python([0, 1, 0], ["A", "B", "C"], conditions))
+        self.assertTrue(executor._apply_conditions_python([0, 1, 1], ["A", "B", "C"], conditions))
 
     def test_cross_table_existence_smoke(self):
         db = FakeDB()

@@ -221,7 +221,8 @@ class BuilderView(ttk.Frame):
         filtro = MultiConditionBuilder(
             body, self.state.db,
             on_table_change=self._on_builder_table_change,
-            title="Filtri (AND/OR)"
+            title="Filtri (AND/OR)",
+            show_table=False,
         )
         filtro.pack(fill=tk.BOTH, expand=True)
         filtro.set_config({
@@ -404,6 +405,15 @@ class BuilderView(ttk.Frame):
 
     def _on_builder_table_change(self, table):
         self.state.sel_tables = [table]
+        # I filtri dell'accordion ereditano la tabella dal builder principale.
+        # Senza questo allineamento si potevano selezionare colonne di una
+        # tabella e applicarle poi alla precedente al momento dell'esecuzione.
+        if self._filtro_widget is not None:
+            try:
+                if self._filtro_widget.var_table.get() != table:
+                    self._filtro_widget.set_table(table)
+            except Exception as e:
+                logger.debug("sincronizzazione tabella filtri fallita: %s", e)
         if hasattr(self, "col_selector") and self.col_selector and self.state.db:
             # Preserva le selezioni correnti: set_columns distrugge e ricrea
             # tutte le checkbox, ma vogliamo mantenere le scelte dell'utente.
