@@ -470,13 +470,29 @@ class ConditionSaveDialog(tk.Toplevel):
     def __init__(
         self,
         parent,
-        initial_name="",
-        initial_desc="",
-        initial_tag="",
+        store=None,
+        default_name="",
+        default_tag="",
+        force_new=False,
+        default_desc="",
         initial_periodic_review_enabled=False,
         initial_periodic_review_cycle="monthly",
         initial_periodic_review_note="",
+        # Legacy parameter names (kept for backward compatibility)
+        initial_name=None,
+        initial_desc=None,
+        initial_tag=None,
     ):
+        # Use legacy params if provided (they override the new ones)
+        if initial_name is not None:
+            default_name = initial_name
+        if initial_desc is not None:
+            default_desc = initial_desc
+        if initial_tag is not None:
+            default_tag = initial_tag
+        if force_new:
+            default_name = ""
+            default_tag = ""
         super().__init__(parent)
         self.title("Salva Condizione")
         self.geometry("460x470")
@@ -488,16 +504,16 @@ class ConditionSaveDialog(tk.Toplevel):
         ttk.Label(frame, text="Titolo Breve:").pack(anchor=tk.W)
         self.ent_name = ttk.Entry(frame)
         self.ent_name.pack(fill=tk.X, pady=(5, 15))
-        self.ent_name.insert(0, initial_name)
+        self.ent_name.insert(0, default_name)
         self.ent_name.focus_set()
         ttk.Label(frame, text="Macrosettore / Tipo Database:").pack(anchor=tk.W)
         self.ent_tag = ttk.Entry(frame)
         self.ent_tag.pack(fill=tk.X, pady=(5, 15))
-        self.ent_tag.insert(0, initial_tag)
+        self.ent_tag.insert(0, default_tag)
         ttk.Label(frame, text="Descrizione Estesa:").pack(anchor=tk.W)
         self.txt_desc = tk.Text(frame, height=5, font=("Segoe UI", 9))
         self.txt_desc.pack(fill=tk.BOTH, expand=True, pady=5)
-        self.txt_desc.insert("1.0", initial_desc)
+        self.txt_desc.insert("1.0", default_desc)
 
         reminder_box = ttk.LabelFrame(frame, text="Promemoria Aggiornamento Periodo", padding=10)
         reminder_box.pack(fill=tk.X, pady=(12, 0))

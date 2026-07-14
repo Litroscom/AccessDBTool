@@ -85,7 +85,7 @@ class App(tk.Tk):
         self.app_ctrl = AppController(self.state, self.db_ctrl)
 
         # Auto-switch al tab Dashboard quando ci sono risultati
-        self.result_ctrl.set_results_found_callback(lambda: self._go_to_tab("dashboard"))
+        self.result_ctrl.set_results_found_callback(self._auto_show_results)
 
         self.nav_buttons = {}
         self.main_panel = None
@@ -203,6 +203,12 @@ class App(tk.Tk):
         else:
             self._build_layout()
             self._switch_tab(tab_id)
+
+    def _auto_show_results(self):
+        """Auto-switch alla dashboard dopo 'Esegui Controllo' e mostra risultati."""
+        self._go_to_tab("dashboard")
+        if self.current_view and hasattr(self.current_view, "show_results") and self.state.current_result:
+            self.current_view.show_results(self.state.current_result)
 
     def _menu_save_cond(self):
         """Menu Salva condizione corrente: sincronizza le sezioni accordion
