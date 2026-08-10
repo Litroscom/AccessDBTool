@@ -145,7 +145,10 @@ class DashboardView(ttk.Frame):
             tag = state_data.get("tag", "idle")
             count_val = state_data.get("count", "-")
             status_val = state_data.get("status", "Mai eseguito")
-            if anomalies_only and tag not in ("error",) and count_val == "-":
+            # "Solo anomalie": mostra solo i controlli con tag "error"
+            # (precedente: teneva anche i controlli OK già eseguiti perché
+            # il filtro scattava solo su count_val == "-").
+            if anomalies_only and tag != "error":
                 continue
             self.dash_tree.insert("", tk.END, iid=str(i),
                                    values=(i + 1, c.get("name", ""),

@@ -2003,7 +2003,10 @@ class FormatValidationBuilder(ttk.Frame):
         ent_val.pack(side=tk.LEFT, padx=5)
         
         def on_type_change(_evt=None):
-            t = [k for k, v in types.items() if v == var_type.get()][0]
+            # Lookup sicuro: un tipo non riconosciuto (es. JSON importato con
+            # chiave breve "text" invece del label) non deve crashare.
+            matches = [k for k, v in types.items() if v == var_type.get()]
+            t = matches[0] if matches else "text"
             if t in ("text", "number"):
                 ent_val.config(state="disabled")
                 var_val.set("")
@@ -2027,7 +2030,8 @@ class FormatValidationBuilder(ttk.Frame):
         parts = ["^"]
         for s in self.segments:
             t_name = s["var_type"].get()
-            t = [k for k, v in s["types_map"].items() if v == t_name][0]
+            matches = [k for k, v in s["types_map"].items() if v == t_name]
+            t = matches[0] if matches else "text"
             val = s["var_val"].get()
             
             if t == "text": parts.append(".+")
@@ -2315,6 +2319,10 @@ class DailyCoverageBuilder(ttk.Frame):
         self._exclude_cond_rows = []
         self._frm_filters = ttk.Frame(self)
         self._frm_filters.grid(row=11, column=0, columnspan=2, sticky="ew", padx=10)
+        # Frame per le esclusioni: mancava (bug) e _add_exclude_cond_row
+        # crashava con AttributeError al primo click su "+ Esclusione".
+        self._frm_exclude_conds = ttk.Frame(self)
+        self._frm_exclude_conds.grid(row=13, column=0, columnspan=2, sticky="ew", padx=10)
         btn_frm = ttk.Frame(self)
         btn_frm.grid(row=12, column=0, columnspan=2, sticky="w", pady=5)
         ttk.Button(btn_frm, text="+ Filtro", command=self._add_filter_row).pack(side=tk.LEFT, padx=2)

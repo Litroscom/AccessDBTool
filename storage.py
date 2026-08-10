@@ -52,9 +52,19 @@ def apply_value_replacement(cond, column, old_value, new_value):
 
     formula = new_cond.get("formula")
     if isinstance(formula, str) and formula.strip():
-        column_present = (not col_target) or bool(
-            re.search(r"\b" + re.escape(col_target) + r"\b", formula, re.IGNORECASE)
-        )
+        column_present = False
+        if col_target:
+            esc = re.escape(col_target)
+            # Parola intera per nomi senza spazi (evita falsi match su
+            # prefissi tipo "ID" dentro "IDdiff"); per colonne multi-parola
+            # (es. "primo passo pratico") \b non funziona: fallback a
+            # contenimento semplice.
+            if re.search(r"\b" + esc + r"\b", formula, re.IGNORECASE):
+                column_present = True
+            elif " " in col_target:
+                column_present = col_target.lower() in formula.lower()
+        else:
+            column_present = True
         if column_present:
             pattern = re.compile(r"'" + re.escape(str(old_value)) + r"'", re.IGNORECASE)
             replaced, n = pattern.subn("'" + str(new_value) + "'", formula)

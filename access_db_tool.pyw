@@ -212,15 +212,28 @@ class App(tk.Tk):
 
     def _menu_save_cond(self):
         """Menu Salva condizione corrente: sincronizza le sezioni accordion
-        prima di salvare, per non perdere le modifiche in Filtri/Esclusioni."""
+        prima di salvare, per non perdere le modifiche in Filtri/Esclusioni.
+        Passa anche la selezione colonne report (fix: prima il salvataggio dal
+        menu azzerava le display_columns salvate)."""
         if self.current_view and hasattr(self.current_view, "_sync_builder_from_sections"):
             self.current_view._sync_builder_from_sections()
-        self.library_ctrl.save_cond(False)
+        display_cols = self._view_display_cols()
+        self.library_ctrl.save_cond(False, display_cols=display_cols)
 
     def _menu_save_cond_new(self):
         if self.current_view and hasattr(self.current_view, "_sync_builder_from_sections"):
             self.current_view._sync_builder_from_sections()
-        self.library_ctrl.save_cond(True)
+        display_cols = self._view_display_cols()
+        self.library_ctrl.save_cond(True, display_cols=display_cols)
+
+    def _view_display_cols(self):
+        """Selezione colonne report del selettore attivo, o None se il
+        selettore non è stato inizializzato (nessuna tabella caricata)."""
+        view = getattr(self, "current_view", None)
+        sel = getattr(view, "col_selector", None)
+        if sel is not None and getattr(sel, "col_vars", None):
+            return sel.get_selected()
+        return None
 
     def _verify_active_formula(self):
         if self.state.active_ctype == "formula_condition" and self.state.active_builder and hasattr(self.state.active_builder, "verify_formula"):
@@ -397,16 +410,25 @@ class App(tk.Tk):
         values = item.get("values", [])
         if not values:
             return
+        title = values[0] if len(values) > 0 else ""
         action = values[2] if len(values) > 2 else ""
         ins = self.state.current_insights
         if not ins:
             return
-        for insight in ins:
-            if insight.get("action") == action:
-                cond = insight.get("condition")
-                if cond:
-                    self._open_cond_in_builder(cond)
-                break
+        # Match prima per titolo (univoco), poi per azione come fallback:
+        # più insight possono condividere la stessa action (es. cross_table).
+        insight = None
+        if title:
+            insight = next((i for i in ins if i.get("title") == title), None)
+        if insight is None and action:
+            insight = next((i for i in ins if i.get("action") == action), None)
+        if insight is None:
+            return
+        # analyze() produce la chiave "config" (non "condition"): era il motivo
+        # per cui il doppio click sugli insight non apriva mai nulla.
+        cond = insight.get("config")
+        if cond:
+            self._open_cond_in_builder(cond)
 
     def _quit(self):
         self.app_ctrl.stop_monitor()

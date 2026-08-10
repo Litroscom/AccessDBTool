@@ -141,6 +141,17 @@ class ResultController:
         res = self.state.current_result
         if not res or not res.get("source_table"):
             return False
+        # Risultati aggregati/riassuntivi: le righe non mappano a singoli
+        # record, la modifica diretta non ha senso anche se le colonne non
+        # finiscono in _1/_2.
+        ctype = self._current_result_condition_type()
+        if ctype in (
+            "aggregate_threshold_check",
+            "aggregate_multi_table_threshold",
+            "daily_coverage_check",
+            "mandatory_record_check",
+        ):
+            return False
         cols = res.get("columns", [])
         blocked = {"Tab1", "Tab2", "Key1", "Key2", "Val1", "Val2", "Sim%"}
         return not any(str(c).endswith(("_1", "_2")) or c in blocked for c in cols)
@@ -317,17 +328,28 @@ class ResultController:
         rows = res.get("rows", [])
         col = dialog_result["column"]
         val = dialog_result["value"]
-        # Nessun fallback su cols[0]: se non riconosciamo una vera PK, rifiutiamo.
-        pk_col = next((c for c in cols if str(c).lower() in ("id", "pk", "codice", "code", "key")), None)
-        if pk_col is None:
-            logger.warning("Bulk replace rifiutato: colonna chiave (PK) non identificabile tra %s", cols)
-            return -1
         table = res.get("source_table")
         if not table and self.state.active_builder:
             cfg = self.state.active_builder.get_config()
             table = cfg.get("table") or cfg.get("source_table")
         if not table:
             return 0
+        # PK reale dal driver ODBC se disponibile (match case-insensitive),
+        # poi nomi standard, poi colonne "id-like" (es. IDdiff, IDCliente).
+        pk_col = None
+        real_pks = db.primary_keys(table) if hasattr(db, "primary_keys") else []
+        real_pks_lower = {str(p).strip().lower() for p in real_pks}
+        for c in cols:
+            if str(c).strip().lower() in real_pks_lower:
+                pk_col = c
+                break
+        if pk_col is None:
+            pk_col = next((c for c in cols if str(c).lower() in ("id", "pk", "codice", "code", "key")), None)
+        if pk_col is None:
+            pk_col = next((c for c in cols if str(c).lower().startswith("id")), None)
+        if pk_col is None:
+            logger.warning("Bulk replace rifiutato: colonna chiave (PK) non identificabile tra %s", cols)
+            return -1
         pk_idx = cols.index(pk_col)
         table_cols = set(db.columns(table))
         sql_col = col[:-2] if (str(col).endswith(("_1", "_2")) and col not in table_cols) else col

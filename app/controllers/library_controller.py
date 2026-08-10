@@ -57,7 +57,6 @@ class LibraryController:
             "description": desc,
             "tag": tag,
             "type": ctype,
-            "display_columns": display_cols,
             "saved_at": datetime.now().isoformat(),
             "database_label": self.state.current_db_label,
             "periodic_review_enabled": periodic_data.get("periodic_review_enabled", False),
@@ -65,6 +64,11 @@ class LibraryController:
             "periodic_review_note": periodic_data.get("periodic_review_note", ""),
             "periodic_review_last_ack": datetime.now().isoformat() if periodic_data.get("periodic_review_enabled") else "",
         }
+        # display_cols None = selettore non inizializzato: non scrivere la
+        # chiave (così l'engine usa il default "tutte le colonne" e un
+        # eventuale valore precedente non viene azzerato per errore).
+        if display_cols is not None:
+            cond_data["display_columns"] = display_cols
         if self.state.sel_tables:
             cond_data["table"] = self.state.sel_tables[0]
         if config:
@@ -118,7 +122,13 @@ class LibraryController:
         messagebox.showinfo("OK", "Condizione aggiornata con successo!")
         return cond_data
 
-    def save_cond(self, force_new=False):
+    def save_cond(self, force_new=False, display_cols=None):
+        """Salva/aggiorna la condizione corrente.
+
+        display_cols=None = selettore colonne non inizializzato: non toccare
+        le display_columns eventualmente già salvate (fix: il salvataggio dal
+        menu Alt+S azzerava la selezione report perché passava []).
+        """
         import json
         ctype = self.state.active_ctype
         if not ctype:
@@ -126,7 +136,6 @@ class LibraryController:
         if not self.state.active_builder:
             return messagebox.showwarning("!", "Configura una condizione prima di salvare.")
         config = self.state.active_builder.get_config()
-        display_cols = []
         from ui_components import ConditionSaveDialog
         dialog = ConditionSaveDialog(
             None, self.state.store,
@@ -152,10 +161,14 @@ class LibraryController:
             tag = self.state.store.items[existing_idx].get("tag", "")
             cond_data = {
                 "name": dialog.result["name"], "description": desc, "tag": tag,
-                "type": ctype, "display_columns": display_cols,
+                "type": ctype,
                 "updated_at": datetime.now().isoformat(),
                 "database_label": self.state.current_db_label,
             }
+            # display_columns applicate solo se il selettore è stato inizializzato
+            # (None = mantieni quelle già salvate)
+            if display_cols is not None:
+                cond_data["display_columns"] = display_cols
             if self.state.sel_tables:
                 cond_data["table"] = self.state.sel_tables[0]
             if config:
@@ -201,11 +214,39 @@ class LibraryController:
         ConditionManagerDialog(None, self.state.store, lambda: None, self.load_cond_into_builder)
 
     def open_groups(self):
+        """Apre il gestore gruppi in una finestra dedicata.
+
+        Il GroupSelector è un Frame: va impacchettato in un Toplevel per essere
+        visibile. "Salva Set Corrente" salva la libreria corrente come gruppo
+        (l'evento <<SaveGroup>> viene gestito qui, dove abbiamo accesso alla
+        libreria e al database attivo).
+        """
+        import tkinter as tk
         from ui_components import GroupSelector
+
         def _on_load(group):
             if group and group.get("conditions"):
                 self._load_group_conditions(group)
-        GroupSelector(self.state.group_store, _on_load)
+
+        top = tk.Toplevel()
+        top.title("Gruppi di condizioni")
+        top.geometry("640x120")
+        top.resizable(False, False)
+
+        selector = GroupSelector(top, self.state.group_store, _on_load)
+        selector.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self._wire_group_selector(selector)
+
+    def _wire_group_selector(self, selector):
+        """Collega l'evento <<SaveGroup>> del GroupSelector al salvataggio
+        della libreria corrente come gruppo (separato per testabilità)."""
+        def _on_save_group(_evt=None):
+            selector.finalize_save(
+                [dict(c) for c in self.state.store.items],
+                database_label=self.state.current_db_label or "",
+            )
+
+        selector.bind("<<SaveGroup>>", _on_save_group)
 
     def _load_group_conditions(self, group):
         for cond in group.get("conditions", []):

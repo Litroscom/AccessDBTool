@@ -1224,5 +1224,283 @@ class BulkValueReplacementTests(unittest.TestCase):
         self.assertEqual(changes, [])
 
 
+class BugFixRegressionTests(unittest.TestCase):
+    """Regressioni per i bug emersi dall'analisi v7.4 (2026-06).
+    Ogni test copre uno o più fix specifici (riferimenti nel docstring)."""
+
+    # --- Bug 1: run_profiler chiamava generate_insights() inesistente ---
+    def test_run_profiler_calls_analyze(self):
+        from app.controllers.db_controller import DBController
+
+        state = SimpleNamespace(
+            db=SimpleNamespace(connected=True),
+            current_insights=[],
+            status=SimpleNamespace(set=lambda v: None),
+        )
+        ctrl = DBController(state)
+        with patch("data_profiler.DataProfiler") as profiler_cls:
+            profiler_cls.return_value.analyze.return_value = [{"title": "X", "config": {}}]
+            ctrl.run_profiler()
+            profiler_cls.return_value.analyze.assert_called_once()
+            self.assertEqual(state.current_insights, [{"title": "X", "config": {}}])
+
+    # --- Bug 3: DailyCoverageBuilder crashava su "+ Esclusione" ---
+    def test_daily_coverage_builder_exclude_frame_exists_and_works(self):
+        import ui_components
+
+        builder = ui_components.DailyCoverageBuilder(None, None)
+        self.assertIsNotNone(getattr(builder, "_frm_exclude_conds", None))
+        builder._add_exclude_cond_row(col="Giorno", op="=", val="01/01/2026")
+        excl = builder.get_config().get("exclude_conditions", [])
+        self.assertEqual(len(excl), 1)
+        self.assertEqual(excl[0]["column"], "Giorno")
+
+    # --- Bug 4: il check singolo non deve bloccare "Esegui Tutti" ---
+    def test_single_dashboard_check_does_not_set_batch_running(self):
+        from app.controllers.batch_controller import BatchController
+
+        state = SimpleNamespace(
+            batch_running=False,
+            dash_items=[],
+            status=SimpleNamespace(set=lambda v: None),
+        )
+        batch = BatchController(state, None, None)
+        with patch("app.controllers.batch_controller.threading.Thread") as thread_cls:
+            batch.run_selected_dashboard_check({"name": "C"})
+            thread_cls.assert_called_once()
+        self.assertFalse(state.batch_running)  # prima del fix restava True
+
+    # --- Bug 5: "Salva Set Corrente" ora è cablato alla libreria ---
+    def test_group_save_event_is_wired_to_library(self):
+        from app.controllers.library_controller import LibraryController
+
+        class DummyGroupSelector:
+            def __init__(self):
+                self.saved = None
+                self.handler = None
+
+            def bind(self, _event, handler):
+                self.handler = handler
+
+            def finalize_save(self, conditions, database_label=""):
+                self.saved = (list(conditions), database_label)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = SimpleNamespace(
+                group_store=GroupStore(os.path.join(tmp, "groups.json")),
+                store=SimpleNamespace(items=[{"name": "C1", "type": "duplicate_check"}]),
+                current_db_label="Datico.mdb",
+                db_registry=SimpleNamespace(names=lambda: []),
+                db=SimpleNamespace(connected=False, db_path=""),
+            )
+            lib = LibraryController(state, DBController(state))
+            selector = DummyGroupSelector()
+            lib._wire_group_selector(selector)
+            selector.handler(None)
+            conditions, db_label = selector.saved
+            self.assertEqual(db_label, "Datico.mdb")
+            self.assertEqual([c["name"] for c in conditions], ["C1"])
+
+    # --- Bug 7: display_columns non azzerate dal salvataggio via menu ---
+    def test_save_to_lib_omits_display_columns_when_none(self):
+        from app.controllers.library_controller import LibraryController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = SimpleNamespace(
+                store=ConditionStore(os.path.join(tmp, "conditions.json")),
+                current_db_label="Datico.mdb",
+                sel_tables=["Diffusori"],
+                status=SimpleNamespace(set=lambda v: None),
+                var_saved=SimpleNamespace(set=lambda v: None),
+            )
+            lib = LibraryController(state, DBController(state))
+            cond = lib.save_to_lib("Nome", "", "tag", "duplicate_check",
+                                   {"table": "Diffusori"}, None, {})
+            self.assertNotIn("display_columns", cond)
+
+    def test_save_to_lib_stores_display_columns_when_provided(self):
+        from app.controllers.library_controller import LibraryController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = SimpleNamespace(
+                store=ConditionStore(os.path.join(tmp, "conditions.json")),
+                current_db_label="Datico.mdb",
+                sel_tables=["Diffusori"],
+                status=SimpleNamespace(set=lambda v: None),
+                var_saved=SimpleNamespace(set=lambda v: None),
+            )
+            lib = LibraryController(state, DBController(state))
+            cond = lib.save_to_lib("Nome", "", "tag", "duplicate_check",
+                                   {"table": "Diffusori"}, ["ID", "Nome"], {})
+            self.assertEqual(cond["display_columns"], ["ID", "Nome"])
+
+    # --- Bug 8: cross_existence senza destinazioni -> errore, non SQL rotto ---
+    def test_cross_existence_without_destinations_returns_error(self):
+        db = FakeDB()
+        ex = ConditionExecutor(db)
+        res = ex.run({
+            "type": "cross_table_existence",
+            "source_table": "A",
+            "key_source": "ID",
+            "conditions": [{"column": "ID", "operator": "IS NOT NULL", "value": ""}],
+            "destinations": [],
+        })
+        self.assertEqual(res["title"], "ERRORE")
+        self.assertEqual(db.fetch_calls, [])  # nessuna query eseguita
+
+    # --- Bug 9: daily_coverage tollera condizioni senza chiave 'value' ---
+    def test_daily_coverage_condition_without_value_key_does_not_crash(self):
+        db = FakeDB()
+        db.queue_fetch(["Giorno"], [["2026-01-01"]])
+        ex = ConditionExecutor(db)
+        res = ex.run({
+            "type": "daily_coverage_check",
+            "table": "Eventi",
+            "day_column": "Giorno",
+            "month_column": "Mese",
+            "expected_count": 7,
+            "conditions": [{"column": "Mese", "operator": "=", "logic": "AND"}],  # senza 'value'
+        })
+        self.assertNotEqual(res["title"], "ERRORE")
+
+    # --- Bug 10: daily_coverage riconosce più formati data ---
+    def test_daily_coverage_parses_extra_date_formats(self):
+        db = FakeDB()
+        db.queue_fetch(["Giorno"], [["2026/06/26"]])
+        ex = ConditionExecutor(db)
+        res = ex.run({
+            "type": "daily_coverage_check",
+            "table": "Eventi",
+            "day_column": "Giorno",
+            "expected_count": 1,
+            "start_date": "26/06/2026",
+            "conditions": [],
+        })
+        self.assertEqual(res["count"], 0)  # il giorno esiste: nessun mancante
+
+    # --- Bug 11: DataProfiler riconosce i tipi testo ODBC reali ---
+    def test_profiler_detects_text_columns_with_odbc_types(self):
+        from data_profiler import DataProfiler
+
+        db = SimpleNamespace(
+            connected=True,
+            table_columns={
+                "Clienti": [
+                    {"name": "Telefono", "type": "Text"},
+                    {"name": "Citta", "type": "VarChar(50)"},
+                ]
+            },
+            _qi=lambda n: "[" + n + "]",
+            fetch=lambda _sql: (["Telefono"], [["1234567890"] for _ in range(5)]),
+        )
+        profiler = DataProfiler(db)
+        insights = profiler.analyze()
+        titles = [i["title"] for i in insights]
+        # il titolo della regola è "...di Telefono" (non "Telefoni")
+        self.assertTrue(any("Telefono" in t for t in titles))
+
+    # --- Bug 12: _duplicates con chiave None non produce risultati vuoti ---
+    def test_duplicates_skip_null_keys_in_display_query(self):
+        db = FakeDB()
+        db.queue_fetch(["ID", "Nome"], [[None, "Mario"], [1, "Mario"]])
+        db.queue_fetch(["ID", "Nome"], [[1, "Mario"]])
+        ex = ConditionExecutor(db)
+        res = ex.run({
+            "type": "duplicate_check",
+            "table": "Clienti",
+            "column": "Nome",
+            "key_column": "ID",
+            "display_columns": ["ID", "Nome"],
+        })
+        self.assertEqual(res["count"], 1)
+        self.assertEqual(db.fetch_calls[1][1], [1])  # IN (?) senza None
+
+    # --- Bug 13: _concat_sim salta chiavi None ---
+    def test_concat_similarity_skips_null_keys(self):
+        db = FakeDB()
+        db.queue_fetch(["ID", "Nome"], [[None, "Mario"], [1, "Mario"]])
+        ex = ConditionExecutor(db)
+        res = ex.run({
+            "type": "concat_similarity",
+            "sources": [{"table": "Clienti", "column": "Nome", "key_column": "ID"}],
+            "threshold": 80,
+        })
+        self.assertNotEqual(res["title"], "ERRORE")
+        self.assertEqual(res["count"], 0)  # nessuna coppia con chiave None
+
+    # --- Bug 14: FormatValidationBuilder tollera tipi segmento sconosciuti ---
+    def test_format_validation_unknown_segment_type_does_not_crash(self):
+        import ui_components
+
+        builder = ui_components.FormatValidationBuilder(None, None)
+        builder._add_segment()
+        builder.segments[-1]["var_type"].set("text")  # chiave breve (JSON legacy)
+        regex = builder._update_regex()
+        self.assertIn(".+", regex)  # fallback su testo libero
+
+    # --- Bug 15: sostituzione valori in formula con colonna multi-parola ---
+    def test_value_replacement_in_formula_with_multiword_column(self):
+        from storage import apply_value_replacement
+
+        cond = {"type": "formula_condition",
+                "formula": "[primo passo pratico] = 'case'"}
+        new_cond, changes = apply_value_replacement(
+            cond, "primo passo pratico", "case", "servizi")
+        self.assertEqual(new_cond["formula"], "[primo passo pratico] = 'servizi'")
+        self.assertEqual(len(changes), 1)
+
+    # --- Bug 16: bulk replace usa la PK reale del driver (es. IDdiff) ---
+    def test_bulk_replace_uses_driver_pk(self):
+        from app.controllers.result_controller import ResultController
+
+        db = FakeDB()
+        db.table_columns = {"Diffusori": [{"name": "IDdiff"}, {"name": "Nome"}]}
+        db.primary_keys = lambda table: ["IDdiff"]
+        state = SimpleNamespace(
+            db=db,
+            active_builder=None,
+            current_result={
+                "source_table": "Diffusori",
+                "columns": ["IDdiff", "Nome"],
+                "rows": [[5, "Mario"], [7, "Luigi"]],
+            },
+        )
+        ctrl = ResultController(state)
+        updated = ctrl.apply_bulk_replace(
+            {"column": "Nome", "value": "X", "mode": "replace_all"}, [0, 1]
+        )
+        self.assertEqual(updated, 2)
+        self.assertEqual(db.bulk_update_calls[0][1], "Nome")
+        self.assertEqual(db.bulk_update_calls[0][2], "IDdiff")
+
+    # --- Bug 17: modifica record disabilitata sui risultati aggregati ---
+    def test_result_supports_direct_update_false_for_aggregates(self):
+        from app.controllers.result_controller import ResultController
+
+        state = SimpleNamespace(
+            current_result={
+                "source_table": "Diffusori",
+                "columns": ["Diffusore", "SUM(mh)"],
+                "rows": [["X", 10]],
+                "_condition_type": "aggregate_threshold_check",
+            },
+        )
+        ctrl = ResultController(state)
+        self.assertFalse(ctrl.result_supports_direct_update())
+
+    # --- Bug 18: LIKE in Python: metacaratteri letterali, wildcard attivi ---
+    def test_python_like_escapes_regex_metacharacters(self):
+        ex = ConditionExecutor(FakeDB())
+        # il punto nel valore LIKE è letterale
+        self.assertFalse(ex._eval_condition_python("ABCXDEF", "LIKE", "%C.D%"))
+        self.assertTrue(ex._eval_condition_python("ABC.DEF", "LIKE", "%C.D%"))
+        # l'underscore resta wildcard LIKE (un carattere qualsiasi)
+        self.assertTrue(ex._eval_condition_python("ABCXDFF", "LIKE", "%C_D%"))
+        self.assertFalse(ex._eval_condition_python("ABCDEF", "LIKE", "%C_D%"))  # CD adiacenti: serve 1 char
+        # parentesi quadre letterali
+        self.assertTrue(ex._eval_condition_python("valore [x]", "LIKE", "%[x]%"))
+        self.assertFalse(ex._eval_condition_python("valore y", "LIKE", "%[x]%"))
+
+
 if __name__ == "__main__":
     unittest.main()

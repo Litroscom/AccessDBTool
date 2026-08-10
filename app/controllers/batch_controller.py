@@ -181,8 +181,10 @@ class BatchController:
         self._log("Batch annullato dall'utente.")
 
     def run_selected_dashboard_check(self, cond):
-        if not self.state.batch_running:
-            self.state.batch_running = True
+        # Esecuzione singola: NON tocca batch_running, altrimenti il flag
+        # resterebbe bloccato su True e "Esegui Tutti" (run_all_batch) 
+        # diventerebbe un no-op silenzioso finché l'utente non cancella
+        # manualmente il batch. Il flag serve solo al batch multi-DB.
         threading.Thread(target=self._execute_dashboard_task, args=(dict(cond),), daemon=True).start()
 
     def _execute_dashboard_task(self, cond):

@@ -37,8 +37,22 @@ class DataProfiler:
             return suggestions
             
         # 1. Analisi delle singole colonne per Tipo Dato (Fuzzy / Duplicati)
+        _TEXT_TYPES = {
+            "str", "varchar", "nvarchar", "text", "memo", "longtext",
+            "ntext", "char", "nchar", "longchar", "tinytext", "mediumtext",
+            "wchar", "varchar2", "character varying",
+        }
+
+        def _is_text_type(t):
+            # Normalizza (minuscole, senza eventuale lunghezza "VarChar(255)")
+            # e confronta in modo case-insensitive: prima il match case-sensitive
+            # su 'Text'/'VarChar' ecc. falliva e ignorava quasi tutte le colonne
+            # testo riportate dai driver ODBC.
+            base = str(t or "").split("(")[0].strip().lower()
+            return base in _TEXT_TYPES
+
         for table, columns in self.db.table_columns.items():
-            text_cols = [c['name'] for c in columns if c['type'] in ('str', 'VARCHAR', 'NVARCHAR', 'TEXT', 'varchar')]
+            text_cols = [c['name'] for c in columns if _is_text_type(c['type'])]
             
             for col in text_cols:
                 # Esegui campionamento

@@ -459,6 +459,11 @@ class ConditionExecutor:
 
         where_str, params = self._build_condition_clause(conditions, exclude_conditions, "s")
         select_str = self._build_select(display_cols, "s")
+        if not destinations:
+            return self._error(
+                "Nessuna tabella destinazione configurata per il controllo "
+                "cross-tabella. Aggiungi almeno una destinazione nel builder."
+            )
         exists_parts = [f"EXISTS (SELECT 1 FROM {_qi(d['table'])} AS {self._safe_alias(d['table'])} WHERE {self._safe_alias(d['table'])}.{_qi(d['key'])} = s.{_qi(k1)})" for d in destinations]
 
         if dest_logic == "ALMENO_UNA": combined, desc_prefix = "NOT (" + " OR ".join(exists_parts) + ")", "NON presente in nessuna tra: "
@@ -496,7 +501,12 @@ class ConditionExecutor:
         if exc: dupes = {k: v for k, v in dupes.items() if k.strip().upper() not in exc}
 
         if display_cols and dupes:
-            dupe_keys = [item[0] for items in dupes.values() for item in items]
+            # Escludi chiavi None: un IN (?) con None non matcha mai e
+            # produrrebbe risultati vuoti nonostante i duplicati esistano.
+            dupe_keys = [
+                item[0] for items in dupes.values() for item in items
+                if item[0] is not None
+            ]
             if dupe_keys:
                 placeholders = ", ".join(["?" for _ in dupe_keys])
                 sql = f"SELECT {self._build_select(display_cols)} FROM {_qi(table)} WHERE {_qi(key)} IN ({placeholders})"
@@ -563,14 +573,16 @@ class ConditionExecutor:
             return (not is_match) if operator == "NOT REGEXP" else is_match
         elif operator == "LIKE":
             # Semantica allineata al path SQL (_build_where): %val% = substring,
-            # quindi usiamo re.search (non fullmatch).
-            pattern = val_cond_s.replace("%", ".*").replace("_", ".")
+            # quindi usiamo re.search (non fullmatch). I metacaratteri regex del
+            # valore utente devono restare LETTERALI: escape prima, poi solo i
+            # wildcard LIKE % e _ (che re.escape NON tocca) diventano regex.
+            pattern = re.escape(val_cond_s).replace("%", ".*").replace("_", ".")
             try:
                 return bool(re.search(pattern, val_db_s, re.IGNORECASE))
             except Exception:
                 return False
         elif operator == "NOT LIKE":
-            pattern = val_cond_s.replace("%", ".*").replace("_", ".")
+            pattern = re.escape(val_cond_s).replace("%", ".*").replace("_", ".")
             try:
                 return not bool(re.search(pattern, val_db_s, re.IGNORECASE))
             except Exception:
@@ -735,7 +747,12 @@ class ConditionExecutor:
                     sql += " AND " + extra_where
             try:
                 _, rows = self.db.fetch(sql, extra_params if extra_params else None)
-                all_data.extend([(f"{t}{sep}{r[0]}", r[1]) for r in rows])
+                # Salta record senza chiave: "Tab\x00None" non sarebbe
+                # identificabile né mostrabile in modo sensato.
+                for r in rows:
+                    if r[0] is None:
+                        continue
+                    all_data.append((f"{t}{sep}{r[0]}", r[1]))
             except Exception as e:
                 return self._error(f"Errore caricamento dati per {t}.{col}: {e}")
 
@@ -857,22 +874,30 @@ class ConditionExecutor:
             sql += f" AND {where}"
             
         try:
-            _, rows = self.db.fetch(sql, params)
+            _, rows = self.db.fetch(sql, params if params else None)
             found_dates = set()
             for r in rows:
                 val = r[0]
                 if isinstance(val, datetime.datetime):
                     found_dates.add(val.date())
                 else:
-                    try:
-                        parsed = datetime.datetime.strptime(str(val).split(" ")[0], "%Y-%m-%d")
-                        found_dates.add(parsed.date())
-                    except (ValueError, TypeError):
+                    parsed_date = None
+                    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d.%m.%Y"):
                         try:
-                            parsed = datetime.datetime.strptime(str(val).split(" ")[0], "%d/%m/%Y")
-                            found_dates.add(parsed.date())
+                            parsed_date = datetime.datetime.strptime(str(val).split(" ")[0], fmt).date()
+                            break
                         except (ValueError, TypeError):
-                            found_dates.add(str(val).strip().upper())
+                            continue
+                    if parsed_date is not None:
+                        found_dates.add(parsed_date)
+                    else:
+                        # Valore data non riconoscibile: NON aggiungerlo come
+                        # stringa, altrimenti il confronto con i date attesi
+                        # fallirebbe sempre generando "giorni mancanti" fittizi.
+                        logger.warning(
+                            "daily_coverage: valore giorno non riconosciuto in [%s].[%s]: %r",
+                            t1, col_day, val,
+                        )
         except Exception as e:
             return self._error(f"Errore SQL: {e}")
             
@@ -889,8 +914,8 @@ class ConditionExecutor:
             if len(found_dates) < expected_count:
                 missing_days = [f"Solo {len(found_dates)} giorni presenti su {expected_count} attesi"]
 
-        mese_vals = [cond["value"] for cond in conds if cond["column"] == c.get("month_column")]
-        sett_vals = [cond["value"] for cond in conds if cond["column"] == c.get("week_column")]
+        mese_vals = [cond.get("value", "") for cond in conds if cond.get("column") == c.get("month_column")]
+        sett_vals = [cond.get("value", "") for cond in conds if cond.get("column") == c.get("week_column")]
         mese = mese_vals[-1] if mese_vals else ""
         sett = sett_vals[-1] if sett_vals else ""
 

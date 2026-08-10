@@ -149,7 +149,7 @@ class DBController:
         try:
             from data_profiler import DataProfiler
             profiler = DataProfiler(self.state.db)
-            self.state.current_insights = profiler.generate_insights()
+            self.state.current_insights = profiler.analyze()
             self.state.status.set(f"Profiler completato: {len(self.state.current_insights)} insight generati.")
         except Exception as e:
             logger.error(f"Errore profiler: {e}")
