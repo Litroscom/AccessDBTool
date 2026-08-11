@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+import ttkbootstrap as ttk
 import logging
 
 import constants
@@ -45,7 +45,7 @@ class BuilderView(ttk.Frame):
         # Area principale: modulo di configurazione (sopra) + risultati (sotto).
         # Il flusso è lineare: configura -> esegui -> vedi i risultati qui sotto.
         # ============================================================
-        paned = ttk.PanedWindow(self, orient=tk.VERTICAL)
+        paned = ttk.Panedwindow(self, orient=tk.VERTICAL)
         paned.pack(fill=tk.BOTH, expand=True)
 
         form_container = ttk.Frame(paned)
@@ -64,9 +64,6 @@ class BuilderView(ttk.Frame):
         self.form_canvas.bind("<Configure>", lambda _e: self._update_scrollregion(), add="+")
         self.form_canvas.bind("<Enter>", lambda _e: self._bind_mousewheel())
         self.form_canvas.bind("<Leave>", lambda _e: self._unbind_mousewheel())
-
-        self.col_selector = ColumnSelector(self)
-        self.col_selector.pack_forget()
 
         # Sezioni in ordine di flusso, numerate per chiarezza
         self._create_section("base",        "1 \u00b7 Configurazione del controllo")
@@ -214,7 +211,9 @@ class BuilderView(ttk.Frame):
 
     def _build_section_base(self, body):
         if self.state.active_builder:
-            self.state.active_builder.pack(in_=body, fill=tk.BOTH, expand=True)
+            # Il builder è stato creato con parent=body (vedi _update_builder_fields):
+            # pack normale, MAI pack(in_=...) su un widget creato altrove (TclError).
+            self.state.active_builder.pack(fill=tk.BOTH, expand=True)
         else:
             ttk.Label(body, text="Seleziona un tipo analisi per iniziare.").pack()
 
@@ -256,12 +255,15 @@ class BuilderView(ttk.Frame):
         self._filtro_widget = filtro
 
     def _build_section_report(self, body):
-        if hasattr(self, "col_selector"):
-            try:
-                self.col_selector.pack(in_=body, fill=tk.X, pady=5)
-            except Exception:
-                ttk.Label(body, text="Nessun selettore colonne disponibile.").pack()
-        else:
+        # Il ColumnSelector va creato nel parent finale (body): pack(in_=...)
+        # su un widget creato con altro parent solleva TclError (skill imparata).
+        sel = getattr(self, "col_selector", None)
+        if sel is None or not sel.winfo_exists():
+            self.col_selector = ColumnSelector(body)
+            sel = self.col_selector
+        try:
+            sel.pack(fill=tk.X, pady=5)
+        except Exception:
             ttk.Label(body, text="Nessun selettore colonne disponibile.").pack()
 
     def _build_section_periodicita(self, body):
@@ -423,8 +425,10 @@ class BuilderView(ttk.Frame):
         ctype_name = self.cmb_ctype.get()
         rev = {v: k for k, v in constants.CONDITION_TYPES.items()}
         self.state.active_ctype = rev.get(ctype_name)
+        # Ordine corretto: si distrugge il builder precedente e si crea il
+        # nuovo con parent=body (riparentarlo con pack(in_=...) è TclError).
+        self.state.active_builder = None
         self._update_builder_fields()
-        self._show_base()
         self._invalidate_accordion_sections()
 
     def _on_builder_table_change(self, table):
@@ -447,10 +451,8 @@ class BuilderView(ttk.Frame):
                 self.col_selector.set_selected(old_selected)
 
     def _update_builder_fields(self):
-        # I builder vengono creati direttamente nel corpo dell'accordion "Base"
-        # dal metodo _build_section_base, che viene chiamato da _show_base
-        # subito dopo questo metodo. Qui ci limitiamo a distruggere i builder
-        # precedenti e crearne uno nuovo (che sara' impacchettato in _show_base).
+        # Il builder viene creato DIRETTAMENTE nel body della sezione "base"
+        # (parent finale): niente pack(in_=...) che fallirebbe con TclError.
         self.state.active_builder = None
         if not self.state.active_ctype:
             return
@@ -459,9 +461,12 @@ class BuilderView(ttk.Frame):
         db = self.state.db
         import ui_components
 
-        # Il builder viene creato con parent temporaneo = self;
-        # _show_base lo spostera' nell'accordion base appena costruito.
-        parent = self
+        base_section = self._sections.get("base")
+        parent = base_section["body"] if base_section else self
+        # Rimuove placeholder/vecchi widget dal body prima di inserire il
+        # builder (es. il placeholder "Seleziona un tipo analisi...").
+        for w in parent.winfo_children():
+            w.destroy()
 
         if ctype == "value_comparison":
             self.state.active_builder = ui_components.ValueComparisonBuilder(parent, db, self._on_builder_table_change)
@@ -529,6 +534,14 @@ class BuilderView(ttk.Frame):
             except Exception as _e:
                 logger.error(f"AggregateMultiTableBuilder init error: {_e}")
                 self.state.status.set(f"Errore builder: {_e}")
+
+        # Il builder è già figlio del body della sezione "base": pack normale.
+        if self.state.active_builder is not None:
+            try:
+                self.state.active_builder.pack(fill=tk.BOTH, expand=True)
+            except Exception as _e:
+                logger.error("pack del builder fallito: %s", _e)
+        self._update_scrollregion()
 
     def _show_base(self):
         base = self._sections["base"]

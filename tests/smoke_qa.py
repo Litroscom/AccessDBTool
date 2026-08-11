@@ -13,6 +13,16 @@ import tkinter as tk
 from tkinter import ttk
 from types import SimpleNamespace
 
+# Root PERSISTENTE di modulo: tkinter considera "default root" la PRIMA Tk
+# creata nel processo, e ttkbootstrap (Style singleton) vi resta agganciato.
+# Se un test crea e distrugge la prima root, ttkbootstrap fallisce con
+# "application has been destroyed" / KeyError sul tema. Creandola qui e
+# NON distruggendola, il singleton Style ha sempre una root viva.
+import ttkbootstrap as _ttkbstrap
+_ROOT = tk.Tk()
+_ROOT.withdraw()
+_ttkbstrap.Style(theme="litera")
+
 import ui_components
 from ui_components import (
     ValueComparisonBuilder, DuplicateBuilder, SimilarityBuilder,
@@ -546,14 +556,13 @@ class ConditionManagerBulkReplaceTests(unittest.TestCase):
     esercita plan+apply senza i dialog interattivi."""
 
     def setUp(self):
-        # ConditionManagerDialog usa widget con opzione 'bootstyle' (ttkbootstrap):
-        # serve un root ttkbootstrap anche quando il test gira isolato.
-        import ttkbootstrap as tb
-        self.root = tb.Window()
-        self.root.withdraw()
+        # ttkbootstrap 2.x supporta UNA sola root viva per processo (il
+        # singleton Style vi è agganciato): riusa la root persistente di
+        # modulo invece di crearne una seconda (tb.Window() fallirebbe).
+        self.root = _ROOT
 
     def tearDown(self):
-        self.root.destroy()
+        pass  # root di modulo: non va distrutta
 
     def test_plan_and_apply_replaces_across_selected_conditions(self):
         from views.condition_manager_view import ConditionManagerDialog

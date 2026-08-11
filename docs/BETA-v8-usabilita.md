@@ -50,9 +50,23 @@ Un tool lineare e immediato: l'utente deve capire in 3 secondi
 
 ## Verifica
 - 91 test di regressione verdi (suite completa `tests/test_logic_verification.py`).
-- I 2 errori residui di `tests/smoke_qa.py` sono ambientali (manca
-  `ttkbootstrap` e l'import di `.pyw` non funziona in WSL), preesistenti
-  e non legati a questa branch.
+- 16/16 test di `tests/smoke_qa.py` verdi sul Python reale Windows.
+- Smoke test end-to-end: tutti i 15 tipi di controllo creano il builder
+  correttamente, tutti i tab funzionano.
+
+## Debug session (2026-08-11) — problemi trovati e corretti
+1. **Avvio: `unknown option -bootstyle`** — le view importavano `ttk` da
+   `tkinter` standard, ma il codice usa le estensioni di ttkbootstrap.
+   Corretto: `import ttkbootstrap as ttk` (ttkbootstrap 2.x non espone il
+   modulo `ttk`, espone i widget; `PanedWindow` si chiama `Panedwindow`).
+2. **CRITICO: builder mai visibili (TclError)** — i builder erano creati con
+   `parent=self` e riparentati con `pack(in_=body)`: Tkinter solleva
+   `TclError: can't pack .X inside .Y` (skill `tkinter-pack-parent-mismatch`).
+   Corretto: i builder e il ColumnSelector vengono ora creati DIRETTAMENTE
+   nel parent finale (body della sezione).
+3. **Test smoke multi-root** — ttkbootstrap 2.x supporta una sola root viva
+   per processo (Style singleton); i test creavano/distruggevano più `Tk()`.
+   Aggiunta root persistente di modulo in `tests/smoke_qa.py`.
 
 ## Versioning
 - `constants.APP_VERSION = "8.0-beta"` (solo su `beta`; `main` resta 7.4).

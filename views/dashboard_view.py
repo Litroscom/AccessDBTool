@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+import ttkbootstrap as ttk
 import json
 import logging
 
@@ -68,7 +68,7 @@ class DashboardView(ttk.Frame):
         )
         self.lbl_dash_hint.pack(fill=tk.X)
 
-        paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        paned = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
 
         left_frame = ttk.Frame(paned, padding=4)

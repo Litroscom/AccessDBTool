@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+import ttkbootstrap as ttk
 import logging
 
 logger = logging.getLogger("AccessDBTool.MonitorView")
