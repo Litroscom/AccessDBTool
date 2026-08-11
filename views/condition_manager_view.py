@@ -1,5 +1,6 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+import ttkbootstrap as ttk
+from tkinter import messagebox
 import logging
 
 import constants
@@ -58,7 +59,7 @@ class ConditionManagerDialog(tk.Toplevel):
                    command=self._import_conditions,
                    bootstyle="secondary-outline").pack(side=tk.RIGHT, padx=2)
 
-        paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        paned = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
         list_frame = ttk.Frame(paned, padding=4)

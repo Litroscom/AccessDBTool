@@ -28,7 +28,7 @@ class AppController:
 
     def switch_tab(self, tab_id, nav_buttons, main_panel):
         import tkinter as tk
-        from tkinter import ttk
+        import ttkbootstrap as ttk
 
         for btn in nav_buttons.values():
             btn.configure(bootstyle="secondary-outline")

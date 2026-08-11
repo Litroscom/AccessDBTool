@@ -6,7 +6,8 @@ Entry point principale - Architettura modulare con controller.
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+import ttkbootstrap as ttk
+from tkinter import filedialog, messagebox, simpledialog
 import queue
 import threading
 import csv
