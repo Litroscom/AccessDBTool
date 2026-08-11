@@ -81,6 +81,7 @@ class App(tk.Tk):
         self.db_ctrl = DBController(self.state)
         self.library_ctrl = LibraryController(self.state, self.db_ctrl)
         self.result_ctrl = ResultController(self.state)
+        self.state.result_ctrl = self.result_ctrl
         self.batch_ctrl = BatchController(self.state, self.db_ctrl, self.result_ctrl)
         self.app_ctrl = AppController(self.state, self.db_ctrl)
 
@@ -205,10 +206,14 @@ class App(tk.Tk):
             self._switch_tab(tab_id)
 
     def _auto_show_results(self):
-        """Auto-switch alla dashboard dopo 'Esegui Controllo' e mostra risultati."""
-        self._go_to_tab("dashboard")
-        if self.current_view and hasattr(self.current_view, "show_results") and self.state.current_result:
-            self.current_view.show_results(self.state.current_result)
+        """Mostra i risultati nel pannello del tab corrente, SENZA saltare
+        di tab (Beta: il salto automatico a Dashboard disorientava il flusso)."""
+        view = getattr(self, "current_view", None)
+        if view is not None and hasattr(view, "show_results") and self.state.current_result:
+            try:
+                view.show_results(self.state.current_result)
+            except Exception:
+                logger.exception("auto-show risultati fallito")
 
     def _menu_save_cond(self):
         """Menu Salva condizione corrente: sincronizza le sezioni accordion
@@ -243,15 +248,16 @@ class App(tk.Tk):
         main_frame = ttk.Frame(self)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.sidebar = ttk.Frame(main_frame, width=44, style="dark.TFrame")
+        # ---- Navigazione laterale con etichette chiare (Beta) ----
+        self.sidebar = ttk.Frame(main_frame, width=200, style="dark.TFrame")
         self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
         self.sidebar.pack_propagate(False)
 
-        content_frame = ttk.Frame(main_frame)
-        content_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        self.nav_bar = ttk.Frame(content_frame)
-        self.nav_bar.pack(fill=tk.X, padx=8, pady=(8, 0))
+        ttk.Label(
+            self.sidebar, text="ACCESS DB\nQUALITY TOOL",
+            bootstyle="inverse-dark", font=("Segoe UI", 10, "bold"),
+            justify="center", anchor="center", padding=(0, 16),
+        ).pack(fill=tk.X)
 
         self.nav_buttons = {}
         for nav_id, label, icon in [
@@ -261,18 +267,60 @@ class App(tk.Tk):
             ("monitor", "Monitor", "\U0001f514"),
         ]:
             btn = ttk.Button(
-                self.nav_bar, text=f"{icon} {label}",
+                self.sidebar, text=f"{icon}  {label}",
                 command=lambda nid=nav_id: self._switch_tab(nid),
                 bootstyle="secondary-outline",
             )
-            btn.pack(side=tk.LEFT, padx=2)
+            btn.pack(fill=tk.X, padx=10, pady=3)
             self.nav_buttons[nav_id] = btn
+
+        ttk.Label(
+            self.sidebar, text=f"v{constants.APP_VERSION}",
+            bootstyle="inverse-dark", font=("", 8), anchor="center",
+        ).pack(side=tk.BOTTOM, fill=tk.X, pady=8)
+
+        content_frame = ttk.Frame(main_frame)
+        content_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # ---- Header contestuale: titolo pagina + database attivo ----
+        header = ttk.Frame(content_frame, padding=(10, 8, 10, 0))
+        header.pack(fill=tk.X)
+        self.lbl_page_title = ttk.Label(header, text="", font=("", 12, "bold"))
+        self.lbl_page_title.pack(side=tk.LEFT)
+        self.lbl_header_db = ttk.Label(header, text="", font=("", 9), foreground="gray")
+        self.lbl_header_db.pack(side=tk.RIGHT)
 
         self.main_panel = ttk.Frame(content_frame, padding=8)
         self.main_panel.pack(fill=tk.BOTH, expand=True)
 
         self._build_status_bar(main_frame)
         self._switch_tab("db")
+
+    _PAGE_TITLES = {
+        "db": "Database",
+        "controls": "Controlli — crea ed esegui un controllo",
+        "dashboard": "Dashboard — esegui tutto e monitora le anomalie",
+        "monitor": "Monitor — controllo periodico automatico",
+    }
+
+    def _refresh_header_db(self):
+        if not hasattr(self, "lbl_header_db"):
+            return
+        if getattr(self.state, "db", None) and self.state.db.connected:
+            label = self.state.current_db_label or self.state.db.db_path or "(senza nome)"
+            self.lbl_header_db.config(text=f"\U0001f5c4  {label}")
+        else:
+            self.lbl_header_db.config(text="Nessun database aperto — usa il tab Database")
+
+    def _switch_tab(self, tab_id):
+        self.current_view = self.app_ctrl.switch_tab(
+            tab_id, self.nav_buttons, self.main_panel
+        )
+        if self.current_view:
+            self._wire_view_callbacks(tab_id)
+        if hasattr(self, "lbl_page_title"):
+            self.lbl_page_title.config(text=self._PAGE_TITLES.get(tab_id, ""))
+        self._refresh_header_db()
 
     def _build_status_bar(self, parent):
         sb = ttk.Frame(parent, bootstyle="dark")
@@ -294,6 +342,9 @@ class App(tk.Tk):
         )
         if self.current_view:
             self._wire_view_callbacks(tab_id)
+        if hasattr(self, "lbl_page_title"):
+            self.lbl_page_title.config(text=self._PAGE_TITLES.get(tab_id, ""))
+        self._refresh_header_db()
 
     def _wire_view_callbacks(self, tab_id):
         view = self.current_view
@@ -301,6 +352,16 @@ class App(tk.Tk):
             view.library_ctrl = self.library_ctrl
             view.result_ctrl = self.result_ctrl
             view.refresh_lib()
+            if hasattr(view, "refresh"):
+                view.refresh()
+            # Risultati incorporati nel tab Controlli (flusso lineare)
+            if hasattr(view, "results_view"):
+                view.results_view.result_ctrl = self.result_ctrl
+                view.results_view.set_open_in_builder_callback(self._open_cond_in_builder)
+                view.results_view.set_ensure_db_callback(self.db_ctrl.ensure_active_database_for_label)
+            if self.result_ctrl:
+                self.result_ctrl.set_results_callback(
+                    lambda res, v=view: v.after(0, v.show_results, res))
         elif tab_id == "dashboard":
             view.library_ctrl = self.library_ctrl
             view.batch_ctrl = self.batch_ctrl
@@ -329,6 +390,8 @@ class App(tk.Tk):
         elif tab_id == "db":
             if hasattr(view, "set_load_insight_callback"):
                 view.set_load_insight_callback(self._load_insight)
+            if hasattr(view, "set_db_changed_callback"):
+                view.set_db_changed_callback(self._refresh_header_db)
             if hasattr(view, "set_profiler_done_callback"):
                 view.set_profiler_done_callback(lambda: None)
 
@@ -372,6 +435,7 @@ class App(tk.Tk):
         self.db_ctrl.close_db()
         if hasattr(self, "current_view") and hasattr(self.current_view, "refresh"):
             self.current_view.refresh()
+        self._refresh_header_db()
 
     def _start_monitor(self):
         if self.app_ctrl.start_monitor():

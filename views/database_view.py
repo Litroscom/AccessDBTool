@@ -16,7 +16,12 @@ class DatabaseView(ttk.Frame):
         self.current_insights = []
         self._on_load_insight = None
         self._on_profiler_done = None
+        self._on_db_changed = None
         self._build_ui()
+
+    def set_db_changed_callback(self, callback):
+        """Chiamato dopo apertura/chiusura DB per aggiornare l'header dell'App."""
+        self._on_db_changed = callback
 
     def set_load_insight_callback(self, callback):
         self._on_load_insight = callback
@@ -100,10 +105,14 @@ class DatabaseView(ttk.Frame):
     def _open_db(self):
         self.db_ctrl.open_db()
         self.refresh()
+        if self._on_db_changed:
+            self._on_db_changed()
 
     def _close_db(self):
         self.db_ctrl.close_db()
         self.refresh()
+        if self._on_db_changed:
+            self._on_db_changed()
 
     def _run_profiler(self):
         self.db_ctrl.run_profiler()

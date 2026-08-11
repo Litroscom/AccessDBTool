@@ -63,6 +63,11 @@ class DashboardView(ttk.Frame):
                    command=self._run_all,
                    bootstyle="danger").pack(side=tk.RIGHT, padx=2)
 
+        self.lbl_dash_hint = ttk.Label(
+            self, text="", foreground="gray", font=("", 8), padding=(6, 0),
+        )
+        self.lbl_dash_hint.pack(fill=tk.X)
+
         paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
 
@@ -140,6 +145,13 @@ class DashboardView(ttk.Frame):
             items = [c for c in items if search in c.get("name", "").lower()]
         anomalies_only = self.var_anomalies_only.get()
         self.state.dash_items = items
+        if not items:
+            self.lbl_dash_hint.config(
+                text="Nessuna condizione da eseguire. Salva almeno una condizione nel tab Controlli "
+                     "(pulsante 'Salva in Libreria') per popolare la dashboard."
+            )
+        else:
+            self.lbl_dash_hint.config(text="")
         for i, c in enumerate(items):
             state_data = self.batch_ctrl.dashboard_state_for_condition(c) if self.batch_ctrl else {}
             tag = state_data.get("tag", "idle")

@@ -6,6 +6,7 @@ class AppState:
         self._lock = threading.Lock()
         self.db = None
         self.executor = None
+        self.result_ctrl = None
         self.store = None
         self.group_store = None
         self.db_registry = None

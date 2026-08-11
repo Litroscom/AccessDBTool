@@ -46,7 +46,10 @@ class AppController:
             return view
         elif tab_id == "controls":
             from views.builder_view import BuilderView
-            view = BuilderView(main_panel, self.state, self.db_ctrl)
+            view = BuilderView(
+                main_panel, self.state, self.db_ctrl,
+                result_controller=getattr(self.state, "result_ctrl", None),
+            )
             view.pack(fill=tk.BOTH, expand=True)
             return view
         elif tab_id == "dashboard":

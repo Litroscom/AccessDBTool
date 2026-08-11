@@ -6,6 +6,7 @@ import constants
 from ui_components import (
     ColumnSelector, MultiConditionBuilder, PERIODIC_REVIEW_CYCLE_CHOICES,
 )
+from views.results_view import ResultsView
 
 logger = logging.getLogger("AccessDBTool.BuilderView")
 
@@ -16,58 +17,78 @@ class BuilderView(ttk.Frame):
         self.state = state
         self.db_ctrl = db_controller
         self.library_ctrl = library_controller
-        self.result_ctrl = result_controller
+        self.result_ctrl = result_controller or getattr(state, "result_ctrl", None)
         self._sections = {}
         self._filtro_widget = None
         self._periodicita_data = None
         self._build_ui()
 
     def _build_ui(self):
+        # ============================================================
+        # Barra superiore: tipo di analisi + stato database
+        # ============================================================
         top = ttk.Frame(self)
         top.pack(fill=tk.X, pady=(0, 8))
 
         ttk.Label(top, text="Tipo Analisi:", font=("", 9, "bold")).pack(side=tk.LEFT)
         self.cmb_ctype = ttk.Combobox(
             top, values=list(constants.CONDITION_TYPES.values()),
-            state="readonly", width=35
+            state="readonly", width=38
         )
         self.cmb_ctype.pack(side=tk.LEFT, padx=8)
         self.cmb_ctype.bind("<<ComboboxSelected>>", self._on_ctype_change)
 
-        ttk.Label(top, text="Tag:", font=("", 9, "bold")).pack(side=tk.LEFT, padx=(20, 4))
-        self.var_tag = tk.StringVar(value="Tutti")
-        self.cmb_tag = ttk.Combobox(
-            top, textvariable=self.var_tag, state="readonly", width=18
+        self.lbl_db_hint = ttk.Label(top, text="", font=("", 8))
+        self.lbl_db_hint.pack(side=tk.RIGHT, padx=4)
+
+        # ============================================================
+        # Area principale: modulo di configurazione (sopra) + risultati (sotto).
+        # Il flusso è lineare: configura -> esegui -> vedi i risultati qui sotto.
+        # ============================================================
+        paned = ttk.PanedWindow(self, orient=tk.VERTICAL)
+        paned.pack(fill=tk.BOTH, expand=True)
+
+        form_container = ttk.Frame(paned)
+        paned.add(form_container, weight=3)
+
+        # Canvas scrollabile: le sezioni sono SEMPRE visibili (niente accordion
+        # collassabile che nascondeva la configurazione essenziale).
+        self.form_canvas = tk.Canvas(form_container, borderwidth=0, highlightthickness=0)
+        self.form_scrollbar = ttk.Scrollbar(form_container, orient=tk.VERTICAL, command=self.form_canvas.yview)
+        self.form_frame = ttk.Frame(self.form_canvas)
+        self.form_frame.bind("<Configure>", lambda _e: self._update_scrollregion())
+        self.form_canvas.create_window((0, 0), window=self.form_frame, anchor="nw", tags="form_frame")
+        self.form_canvas.configure(yscrollcommand=self.form_scrollbar.set)
+        self.form_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.form_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.form_canvas.bind("<Configure>", lambda _e: self._update_scrollregion(), add="+")
+        self.form_canvas.bind("<Enter>", lambda _e: self._bind_mousewheel())
+        self.form_canvas.bind("<Leave>", lambda _e: self._unbind_mousewheel())
+
+        self.col_selector = ColumnSelector(self)
+        self.col_selector.pack_forget()
+
+        # Sezioni in ordine di flusso, numerate per chiarezza
+        self._create_section("base",        "1 \u00b7 Configurazione del controllo")
+        self._create_section("filtri",      "2 \u00b7 Filtri aggiuntivi (facoltativi)")
+        self._create_section("report",      "3 \u00b7 Colonne da mostrare nel report")
+        self._create_section("periodicita", "4 \u00b7 Promemoria di aggiornamento (facoltativo)")
+        for section_id in ("base", "filtri", "report", "periodicita"):
+            self._build_section_content(section_id)
+            self._sections[section_id]["built"] = True
+
+        # Risultati incorporati: esegui un controllo e li vedi qui sotto
+        results_container = ttk.Frame(paned)
+        paned.add(results_container, weight=2)
+        self.results_view = ResultsView(
+            results_container, self.state, self.result_ctrl,
+            enable_fullscreen=False,
         )
-        self.cmb_tag.pack(side=tk.LEFT, padx=4)
+        self.results_view.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(top, text="DB:", font=("", 9, "bold")).pack(side=tk.LEFT, padx=(20, 4))
-        self.var_db = tk.StringVar()
-        self.cmb_db = ttk.Combobox(
-            top, textvariable=self.var_db, state="readonly", width=20
-        )
-        self.cmb_db.pack(side=tk.LEFT, padx=4)
-
-        # Canvas + scrollbar per permettere lo scroll quando il contenuto eccede
-        self.accordion_canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
-        self.accordion_scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.accordion_canvas.yview)
-        self.accordion_frame = ttk.Frame(self.accordion_canvas)
-        self.accordion_frame.bind("<Configure>", lambda _e: self._update_scrollregion())
-        self.accordion_canvas.create_window((0, 0), window=self.accordion_frame, anchor="nw", tags="acc_frame")
-        self.accordion_canvas.configure(yscrollcommand=self.accordion_scrollbar.set)
-        self.accordion_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=(0, 8))
-        self.accordion_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=(0, 8))
-        # Adatta larghezza del frame interno alla larghezza del canvas
-        self.accordion_canvas.bind("<Configure>", lambda _e: self._update_scrollregion(), add="+")
-        # Mouse wheel scrolling
-        self.accordion_canvas.bind("<Enter>", lambda _e: self._bind_mousewheel())
-        self.accordion_canvas.bind("<Leave>", lambda _e: self._unbind_mousewheel())
-
-        self._create_accordion_section("base", "Base", expanded=True)
-        self._create_accordion_section("filtri", "Filtri", expanded=False)
-        self._create_accordion_section("report", "Colonne Report", expanded=False)
-        self._create_accordion_section("periodicita", "Periodicit\u00e0", expanded=False)
-
+        # ============================================================
+        # Libreria: condizioni salvate
+        # ============================================================
         lib_frame = ttk.LabelFrame(self, text="Libreria", padding=6)
         lib_frame.pack(fill=tk.X)
 
@@ -83,8 +104,16 @@ class BuilderView(ttk.Frame):
                    command=self._open_groups,
                    bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
 
+        # ============================================================
+        # Barra azioni
+        # ============================================================
         action_bar = ttk.Frame(self)
         action_bar.pack(fill=tk.X, side=tk.BOTTOM)
+        ttk.Label(
+            action_bar,
+            text="1) Scegli il tipo \u00b7 2) Configura \u00b7 3) Esegui (Alt+R) — i risultati compaiono qui sotto",
+            foreground="gray", font=("", 8),
+        ).pack(side=tk.LEFT, padx=4)
         ttk.Button(action_bar, text="Pulisci",
                    command=self._clear_builder,
                    bootstyle="secondary").pack(side=tk.LEFT, padx=2)
@@ -94,52 +123,48 @@ class BuilderView(ttk.Frame):
         ttk.Button(action_bar, text="Aggiorna Salvata",
                    command=self._update_to_lib,
                    bootstyle="warning").pack(side=tk.LEFT, padx=2)
-        ttk.Button(action_bar, text="Esegui Controllo",
+        ttk.Button(action_bar, text="\u25b6 Esegui Controllo (Alt+R)",
                    command=self._run_current,
                    bootstyle="danger").pack(side=tk.RIGHT, padx=2)
 
-        self.col_selector = ColumnSelector(self)
-        self.col_selector.pack_forget()
-
-    def _create_accordion_section(self, section_id, label, expanded=False):
-        header = ttk.Button(
-            self.accordion_frame, text=label,
-            command=lambda: self._toggle_accordion(section_id),
-            bootstyle="secondary-outline",
+    def _create_section(self, section_id, label):
+        """Crea una sezione sempre visibile (titolo + corpo). La struttura
+        interna (dict _sections) resta compatibile con i metodi di
+        sincronizzazione esistenti."""
+        header = ttk.Label(
+            self.form_frame, text=label, font=("", 9, "bold"),
+            bootstyle="primary", padding=(6, 4),
         )
-        header.pack(fill=tk.X, pady=(2, 0))
+        header.pack(fill=tk.X, pady=(4, 0))
 
-        body = ttk.Frame(self.accordion_frame, padding=8)
-        if expanded:
-            body.pack(fill=tk.BOTH, expand=True)
-        else:
-            body.pack_forget()
+        body = ttk.Frame(self.form_frame, padding=(8, 2, 8, 8))
+        body.pack(fill=tk.BOTH, expand=True)
 
         self._sections[section_id] = {
             "header": header,
             "body": body,
             "label": label,
-            "expanded": expanded,
+            "expanded": True,
             "built": False,
         }
 
     def _bind_mousewheel(self):
-        self.accordion_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.form_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
 
     def _unbind_mousewheel(self):
-        self.accordion_canvas.unbind_all("<MouseWheel>")
+        self.form_canvas.unbind_all("<MouseWheel>")
 
     def _on_mousewheel(self, event):
-        self.accordion_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self.form_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _update_scrollregion(self):
         """Aggiorna la scrollregion del canvas in base al contenuto attuale."""
         try:
-            if self.accordion_canvas.winfo_exists():
-                width = self.accordion_canvas.winfo_width()
+            if self.form_canvas.winfo_exists():
+                width = self.form_canvas.winfo_width()
                 if width > 1:
-                    self.accordion_canvas.itemconfig("acc_frame", width=width)
-                self.accordion_canvas.configure(scrollregion=self.accordion_canvas.bbox("all"))
+                    self.form_canvas.itemconfig("form_frame", width=width)
+                self.form_canvas.configure(scrollregion=self.form_canvas.bbox("all"))
         except Exception as e:
             logger.debug("_update_scrollregion errore: %s", e)
 
@@ -173,19 +198,7 @@ class BuilderView(ttk.Frame):
         # accordion dedicata che duplicava quell'UI.
 
     def _toggle_accordion(self, section_id):
-        section = self._sections[section_id]
-        if section["expanded"]:
-            self._sync_builder_from_sections()
-            section["body"].pack_forget()
-            section["expanded"] = False
-            section["header"].configure(bootstyle="secondary-outline")
-        else:
-            if not section["built"]:
-                self._build_section_content(section_id)
-                section["built"] = True
-            section["body"].pack(fill=tk.BOTH, expand=True)
-            section["expanded"] = True
-            section["header"].configure(bootstyle="primary")
+        """Compat: le sezioni sono sempre visibili in Beta, niente da fare."""
         self._update_scrollregion()
 
     def _build_section_content(self, section_id):
@@ -213,6 +226,17 @@ class BuilderView(ttk.Frame):
             config = self.state.active_builder.get_config()
         except Exception:
             ttk.Label(body, text="Questo tipo di controllo non supporta filtri aggiuntivi.").pack(pady=20)
+            return
+
+        # Questi controlli definiscono la propria logica (formula / SE...ALLORA):
+        # mostrare un builder di filtri vuoto sarebbe fuorviante.
+        if self.state.active_ctype in ("formula_condition", "dependent_condition_check"):
+            ttk.Label(
+                body,
+                text="Questo controllo definisce la propria logica (formula SQL / SE...ALLORA):\n"
+                     "non sono necessari filtri aggiuntivi.",
+                foreground="gray", justify=tk.LEFT,
+            ).pack(pady=16, padx=4)
             return
 
         table = config.get("table", "")
@@ -588,11 +612,16 @@ class BuilderView(ttk.Frame):
         self.state.var_saved.set("")
         self.state.var_ctype.set("")
         self.state.loaded_condition_idx = None
+        # Ricostruisci subito le sezioni con il placeholder (sezioni sempre
+        # visibili: non restano vuote dopo "Pulisci").
+        self._filtro_widget = None
         for section_id in list(self._sections.keys()):
             section = self._sections[section_id]
             for w in section["body"].winfo_children():
                 w.destroy()
-            section["built"] = False
+            self._build_section_content(section_id)
+            section["built"] = True
+        self._update_scrollregion()
 
     def _open_manager(self):
         if self.library_ctrl:
@@ -652,6 +681,30 @@ class BuilderView(ttk.Frame):
         display_cols = self.col_selector.get_selected() if hasattr(self, "col_selector") else []
         self.result_ctrl.run_current(display_cols)
 
+    def show_results(self, res):
+        """Delega al pannello risultati incorporato (chiamato dal controller)."""
+        if hasattr(self, "results_view") and self.results_view is not None:
+            self.results_view.show_results(res)
+
+    def refresh(self):
+        """Aggiorna gli stati dipendenti dal DB aperto (chiamato dall'App)."""
+        self._refresh_db_hint()
+
+    def _refresh_db_hint(self):
+        if not hasattr(self, "lbl_db_hint"):
+            return
+        db = getattr(self.state, "db", None)
+        if db is not None and getattr(db, "connected", False):
+            self.lbl_db_hint.config(
+                text=f"Database: {self.state.current_db_label or db.db_path}",
+                foreground="#2E7D32",
+            )
+        else:
+            self.lbl_db_hint.config(
+                text="Nessun database aperto — vai nel tab Database e apri il file",
+                foreground="#B71C1C",
+            )
+
     def refresh_lib(self):
         names = self.state.store.names()
         self.cmb_lib["values"] = names
@@ -659,12 +712,9 @@ class BuilderView(ttk.Frame):
             self.state.var_saved.set("")
 
     def _invalidate_accordion_sections(self):
-        """Invalida tutte le sezioni accordion tranne 'base' (che viene
-        gestita separatamente da _show_base). Distrugge i widget esistenti
-        e forza la ricostruzione al prossimo toggle/sync, in modo che vengano
-        creati con il builder attivo corretto."""
-        # Reset dei riferimenti PRIMA di ricostruire, così _build_section_content
-        # può assegnare i nuovi widget correttamente
+        """Ricostruisce SUBITO le sezioni dipendenti dal builder attivo
+        (filtri, periodicità). In Beta le sezioni sono sempre visibili:
+        niente costruzione lazy al toggle, quindi si ricostruisce qui."""
         self._filtro_widget = None
         for section_id in ("filtri", "periodicita"):
             section = self._sections.get(section_id)
@@ -672,47 +722,22 @@ class BuilderView(ttk.Frame):
                 continue
             for w in section["body"].winfo_children():
                 w.destroy()
-            section["built"] = False
-            # NON ricostruire qui se la sezione è espansa: potremmo farlo con
-            # active_builder=None (ad es. durante _on_ctype_change) e creare un
-            # widget placeholder che poi blocca il caricamento dei dati.
-            # La ricostruzione avverrà in _sync_accordion_from_builder o
-            # _auto_expand_sections quando il builder è disponibile.
+            self._build_section_content(section_id)
+            section["built"] = True
+        self._update_scrollregion()
 
     def _auto_expand_sections(self, cond):
-        """Espande automaticamente le sezioni accordion che contengono dati,
-        così che il costruttore mostri tutto il configurato in modo leggibile."""
-        has_conditions = bool(cond.get("conditions") or cond.get("exclude_conditions") or cond.get("exceptions"))
-        has_periodic = bool(cond.get("periodic_review_enabled"))
-        # Alcuni tipi di condizione hanno condizioni in campi diversi
-        # (es. dependent_condition_check ha 'antecedent'/'consequent')
-        if not has_conditions:
-            for alt_key in ("antecedent", "consequent", "dest_conditions",
-                           "exclude_dest_conditions"):
-                if cond.get(alt_key):
-                    has_conditions = True
-                    break
-
-        sections_to_expand = []
-        if has_conditions:
-            # Espandi la sezione Filtri se ci sono filtri (le esclusioni sono
-            # gestite inline nel builder, non qui).
-            sections_to_expand.append("filtri")
-        if has_periodic:
-            sections_to_expand.append("periodicita")
-
-        for section_id in sections_to_expand:
+        """Compat: in Beta le sezioni sono sempre visibili; assicura solo che
+        il contenuto sia costruito (utile al primo caricamento di una
+        condizione salvata)."""
+        for section_id in ("filtri", "periodicita"):
             section = self._sections.get(section_id)
             if section is None:
                 continue
-            if not section["expanded"]:
-                # Costruisci il contenuto se non ancora fatto
-                if not section["built"]:
-                    self._build_section_content(section_id)
-                    section["built"] = True
-                section["body"].pack(fill=tk.BOTH, expand=True)
-                section["expanded"] = True
-                section["header"].configure(bootstyle="primary")
+            if not section["built"]:
+                self._build_section_content(section_id)
+                section["built"] = True
+        self._update_scrollregion()
 
     def sync_ctype(self):
         if self.state.active_ctype:

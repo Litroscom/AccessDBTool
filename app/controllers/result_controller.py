@@ -11,7 +11,7 @@ logger = logging.getLogger("AccessDBTool.ResultController")
 class ResultController:
     def __init__(self, state):
         self.state = state
-        self._on_results_callback = None
+        self._on_results_callbacks = []  # più view possono ascoltare i risultati
         self._on_results_found_callback = None  # chiamata quando count > 0 (es. per auto-switch tab)
         self._export_csv_callback = None
         self._edit_record_callback = None
@@ -20,7 +20,10 @@ class ResultController:
         self._open_in_builder_callback = None
 
     def set_results_callback(self, callback):
-        self._on_results_callback = callback
+        """Registra un callback chiamato a ogni nuovo risultato.
+        (Beta: supporta più view, es. Controlli + Dashboard insieme.)"""
+        if callback not in self._on_results_callbacks:
+            self._on_results_callbacks.append(callback)
 
     def set_results_found_callback(self, callback):
         """Callback chiamato quando i risultati contengono record (per auto-switch a report)."""
@@ -80,10 +83,18 @@ class ResultController:
         except Exception as e:
             messagebox.showerror("Errore", str(e))
 
+    def _notify_results(self, res):
+        """Notifica il risultato a tutte le view registrate, senza mai
+        propagare un errore di una singola view (es. view distrutta)."""
+        for cb in list(self._on_results_callbacks):
+            try:
+                cb(res)
+            except Exception as e:
+                logger.warning("Callback risultati ignorata per errore: %s", e)
+
     def _show_results(self, res):
         self.state.current_result = res
-        if self._on_results_callback:
-            self._on_results_callback(res)
+        self._notify_results(res)
         count = res.get("count", 0) if isinstance(res, dict) else 0
         if count == 0:
             self.state.status.set("Esecuzione completata — nessun problema trovato.")

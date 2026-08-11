@@ -202,14 +202,10 @@ class BatchController:
             tag = "error" if count > 0 else "ok"
             self.set_dashboard_state(cond, count, "Completato", tag, result=res)
             self._log(f"{name} -> {count} anomalie")
-            self._safe(self._on_results_callback, res)
+            self._safe(self.result_ctrl._notify_results, res)
         except Exception as e:
             logger.error(f"Errore esecuzione '{name}': {e}")
             self.set_dashboard_state(cond, "ERR", "Errore", "error")
             self._log(f"{name} -> ERRORE: {e}")
         finally:
             self._safe(self._on_dash_update)
-
-    @property
-    def _on_results_callback(self):
-        return self.result_ctrl._on_results_callback
