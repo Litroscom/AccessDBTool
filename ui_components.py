@@ -96,64 +96,6 @@ def attach_alt_shortcut(widget, letter, command=None):
 
     widget.bind_all(f"<Alt-{shortcut}>", _handler, add="+")
 
-class NotificationPopup(tk.Toplevel):
-    def __init__(self, parent, title, message, level="warning",
-                 auto_close_sec=0, detail_callback=None):
-        super().__init__(parent)
-        self.overrideredirect(True)
-        self.attributes("-topmost", True)
-        colors = {
-            "info": ("#2196F3", "#E3F2FD", "i"),
-            "warning": ("#FF9800", "#FFF3E0", "!"),
-            "error": ("#F44336", "#FFEBEE", "X"),
-            "ok": ("#4CAF50", "#E8F5E9", "OK"),
-        }
-        accent, bg, icon = colors.get(level, colors["info"])
-        self.configure(bg=accent)
-        inner = tk.Frame(self, bg=bg, padx=12, pady=10)
-        inner.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-        hdr = tk.Frame(inner, bg=bg)
-        hdr.pack(fill=tk.X)
-        tk.Label(hdr, text="[" + icon + "] " + title, font=("Segoe UI", 11, "bold"),
-                 bg=bg, fg=accent).pack(side=tk.LEFT)
-        tk.Button(hdr, text="X", font=("Segoe UI", 9), relief=tk.FLAT,
-                  bg=bg, command=self.destroy).pack(side=tk.RIGHT)
-        tk.Label(inner, text=message, font=("Segoe UI", 9), bg=bg,
-                 wraplength=350, justify=tk.LEFT).pack(fill=tk.X, pady=(6, 4))
-        if detail_callback:
-            tk.Button(inner, text="Vedi dettagli", command=lambda: [
-                detail_callback(), self.destroy()
-            ], bg=accent, fg="white", relief=tk.FLAT, padx=10, pady=3).pack(anchor=tk.W, pady=(4, 0))
-        tk.Label(inner, text=datetime.now().strftime("%H:%M:%S"),
-                 font=("Segoe UI", 7), bg=bg, fg="gray").pack(anchor=tk.E)
-        self.update_idletasks()
-        w = self.winfo_width()
-        h = self.winfo_height()
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        existing = [ch for ch in parent.winfo_children()
-                    if isinstance(ch, NotificationPopup) and ch != self]
-        offset = len(existing) * (h + 10)
-        self.geometry("+" + str(sw - w - 20) + "+" + str(sh - h - 60 - offset))
-        if auto_close_sec > 0:
-            self.after(auto_close_sec * 1000, self._safe_destroy)
-        self.attributes("-alpha", 0.0)
-        self._fade_in()
-
-    def _fade_in(self, alpha=0.0):
-        if alpha < 0.95:
-            self.attributes("-alpha", alpha)
-            self.after(30, lambda: self._fade_in(alpha + 0.1))
-        else:
-            self.attributes("-alpha", 0.95)
-
-    def _safe_destroy(self):
-        try:
-            self.destroy()
-        except Exception:
-            pass
-
-
 class ColumnSelector(ttk.LabelFrame):
     def __init__(self, parent, text="Colonne da visualizzare nel report"):
         super().__init__(parent, text=text, padding=5)

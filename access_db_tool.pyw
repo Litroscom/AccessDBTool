@@ -20,7 +20,6 @@ import tkinter.scrolledtext as st
 import constants
 from logger_config import setup_logging
 import theme_config
-import ui_helpers
 from db_manager import DatabaseManager
 from engines import ConditionExecutor, SimilarityEngine
 from storage import ConditionStore, MonitorLog, GroupStore, DatabaseRegistry

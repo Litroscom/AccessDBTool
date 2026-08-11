@@ -24,20 +24,6 @@ class DatabaseManager:
         # Proprietà economica e senza side-effect: nessun I/O nel getter.
         return self.conn is not None
 
-    def ping(self):
-        """Verifica attiva che la connessione ODBC sia ancora funzionante.
-        Esegue un SELECT 1 sotto lock; in caso di errore resetta la connessione."""
-        if self.conn is None:
-            return False
-        with self._lock:
-            try:
-                self.conn.cursor().execute("SELECT 1")
-                return True
-            except Exception:
-                logger.warning("Connessione al database persa (stale connection). Resetto.")
-                self.conn = None
-                return False
-
     def connect(self, path):
         path = os.path.abspath(os.path.normpath(path))
         if not os.path.exists(path):
@@ -201,13 +187,6 @@ class DatabaseManager:
             except Exception as e:
                 logger.error(f"Errore durante esecuzione SQL [{sql}]: {e}")
                 raise
-
-    def row_count(self, table):
-        try:
-            _, rows = self.fetch(f"SELECT COUNT(*) FROM {self._qi(table)}")
-            return rows[0][0] if rows else 0
-        except Exception:
-            return -1
 
     def cast_value(self, table, col_name, value):
         """Converte un valore stringa (es. da Treeview) al tipo Python corretto
