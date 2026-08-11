@@ -77,6 +77,11 @@ def run_pyinstaller():
         APP_NAME,
         "--additional-hooks-dir",
         str(HOOKS_DIR),
+        # ttkbootstrap carica asset grafici (PNG/ICO per checkbox, progressbar,
+        # icona app) e temi via import dinamici: PyInstaller non li include da
+        # solo, senza --collect-all l'exe perde immagini e temi.
+        "--collect-all",
+        "ttkbootstrap",
         str(ENTRYPOINT),
     ]
     for path in extra_paths:

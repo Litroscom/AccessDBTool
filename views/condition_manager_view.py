@@ -333,13 +333,55 @@ class ConditionManagerDialog(tk.Toplevel):
         if not self.store.items:
             messagebox.showwarning("Attenzione", "Nessuna condizione da esportare.")
             return
-        if hasattr(self.parent, "_export_conditions"):
-            self.parent._export_conditions(self.store.items)
+        # Autonomo: il dialog è aperto con parent=None, quindi non ci si può
+        # appoggiare a un callback della finestra padre (prima: pulsante inerte).
+        from tkinter import filedialog
+        import json
+        path = filedialog.asksaveasfilename(
+            title="Esporta condizioni",
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json")],
+        )
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(self.store.items, fh, indent=2, ensure_ascii=False)
+        messagebox.showinfo("OK", f"Esportate {len(self.store.items)} condizioni.")
 
     def _import_conditions(self):
-        if hasattr(self.parent, "_import_conditions"):
-            self.parent._import_conditions()
-            self._populate()
+        from tkinter import filedialog
+        import json
+        path = filedialog.askopenfilename(
+            title="Importa condizioni",
+            filetypes=[("JSON", "*.json")],
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception as e:
+            messagebox.showerror("Errore", f"File non valido: {e}")
+            return
+        if not isinstance(data, list):
+            messagebox.showerror("Errore", "Formato non valido: atteso array JSON.")
+            return
+        added = updated = 0
+        for cond in data:
+            if not isinstance(cond, dict):
+                continue
+            name = str(cond.get("name", "") or "").strip()
+            idx = next((i for i, c in enumerate(self.store.items)
+                        if str(c.get("name", "") or "").strip() == name), None)
+            if idx is not None:
+                self.store.update(idx, dict(cond))
+                updated += 1
+            else:
+                self.store.add(dict(cond))
+                added += 1
+        self._populate()
+        self.on_refresh()
+        messagebox.showinfo("OK", f"Importate {added} nuove, {updated} aggiornate.")
 
 
 class BulkReplaceDialog(tk.Toplevel):
