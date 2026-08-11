@@ -12,7 +12,7 @@ from unittest.mock import patch
 sys.modules.setdefault("pyodbc", types.SimpleNamespace(drivers=lambda: []))
 
 import ui_components
-from engines import ConditionExecutor
+from engines import ConditionExecutor, SimilarityEngine
 from monitor_engine import MonitorEngine
 from storage import ConditionStore, DatabaseRegistry, GroupStore
 from app.controllers.app_controller import AppController
@@ -1500,6 +1500,214 @@ class BugFixRegressionTests(unittest.TestCase):
         # parentesi quadre letterali
         self.assertTrue(ex._eval_condition_python("valore [x]", "LIKE", "%[x]%"))
         self.assertFalse(ex._eval_condition_python("valore y", "LIKE", "%[x]%"))
+
+
+class ExclusionFlowTests(unittest.TestCase):
+    """Verifica completa del flusso esclusioni: quello che la UI produce
+    (menu destro / builder) deve arrivare fino all'engine e generare la
+    clausola SQL corretta (NOT (...) / esclusioni nei match)."""
+
+    # ------------------------------------------------------------------ #
+    #  SIMILARITY — le 4 modalità del menu destro                         #
+    # ------------------------------------------------------------------ #
+
+    def test_similarity_pair_values_excluded(self):
+        # UI: "Escludi coppia per sempre (valori)" -> exceptions ["A | B"]
+        matches = SimilarityEngine.find_similar(
+            [("1", "Via Roma"), ("2", "Via  Roma")], threshold=80,
+            exceptions=["Via Roma | Via  Roma"],
+        )
+        self.assertEqual(matches, [])  # la coppia è esclusa
+
+    def test_similarity_pair_values_absent_are_not_excluded(self):
+        matches = SimilarityEngine.find_similar(
+            [("1", "Via Roma"), ("2", "Via  Roma")], threshold=80,
+            exceptions=["Piazza | Piazza"],  # altra coppia: nessun effetto
+        )
+        self.assertEqual(len(matches), 1)
+
+    def test_similarity_pair_records_excluded(self):
+        # UI: "Escludi coppia specifica di record" -> exceptions ["ID:1 | ID:2"]
+        matches = SimilarityEngine.find_similar(
+            [("1", "Via Roma"), ("2", "Via  Roma")], threshold=80,
+            exceptions=["ID:1 | ID:2"],
+        )
+        self.assertEqual(matches, [])
+
+    def test_similarity_left_records_excluded(self):
+        # UI: "Escludi record sinistri" -> exclude_conditions [ID = 10 OR ID = 11]
+        db = FakeDB()
+        db.queue_fetch(["ID", "Nome"], [[12, "Via Roma"], [13, "Via  Roma"]])
+        ex = ConditionExecutor(db)
+        res = ex.run({
+            "type": "similarity_check", "table": "Clienti",
+            "column": "Nome", "key_column": "ID", "threshold": 80,
+            "exclude_conditions": [
+                {"column": "ID", "operator": "=", "value": "10", "logic": "AND"},
+                {"column": "ID", "operator": "=", "value": "11", "logic": "OR"},
+            ],
+        })
+        sql, params = db.fetch_calls[0]
+        self.assertIn("OR ([ID] = ?)", sql)
+        self.assertEqual(params, ["10", "11"])
+        # i record esclusi non sono nemmeno nel dataset analizzato
+        self.assertEqual(res["count"], 1)  # 12 vs 13 ancora accoppiati
+
+    # ------------------------------------------------------------------ #
+    #  BUILDER -> CONFIG -> ENGINE (come li produce la UI)                #
+    # ------------------------------------------------------------------ #
+
+    def test_similarity_builder_record_exclusions_reach_engine(self):
+        import ui_components
+        b = ui_components.SimilarityBuilder(None, None)
+        b.var_table.set("Clienti"); b.var_col.set("Nome"); b.var_key.set("ID")
+        b.add_record_exclusions(["10", "11"])  # menu destro -> record
+        cfg = b.get_config()
+        self.assertEqual(cfg["exclude_conditions"][0]["value"], "10")
+        self.assertEqual(cfg["exclude_conditions"][1]["logic"], "OR")
+
+        db = FakeDB(); db.queue_fetch(["ID", "Nome"], [])
+        ex = ConditionExecutor(db)
+        res = ex.run({
+            "type": "similarity_check", "table": cfg["table"],
+            "column": cfg["column"], "key_column": cfg["key_column"],
+            "threshold": cfg["threshold"],
+            "exclude_conditions": cfg["exclude_conditions"],
+        })
+        sql, params = db.fetch_calls[0]
+        self.assertIn("OR ([ID] = ?)", sql)
+        self.assertEqual(params, ["10", "11"])
+
+    def test_similarity_builder_pair_exceptions_reach_engine(self):
+        import ui_components
+        b = ui_components.SimilarityBuilder(None, None)
+        b.add_exceptions(["Via Roma | Via  Roma"])  # menu destro -> coppia valori
+        cfg = b.get_config()
+        self.assertIn("Via Roma | Via  Roma", cfg["exceptions"])
+        # e l'engine le applica
+        matches = SimilarityEngine.find_similar(
+            [("1", "Via Roma"), ("2", "Via  Roma")], threshold=80,
+            exceptions=cfg["exceptions"],
+        )
+        self.assertEqual(matches, [])
+
+    # ------------------------------------------------------------------ #
+    #  TUTTI GLI ALTRI CONTROLLI: exclude_conditions -> SQL NOT (...)     #
+    # ------------------------------------------------------------------ #
+
+    def test_duplicates_exceptions_excluded(self):
+        db = FakeDB()
+        db.queue_fetch(["ID", "Nome"], [[1, "Mario"], [2, "Mario"], [3, "Anna"], [4, "Anna"]])
+        ex = ConditionExecutor(db)
+        res = ex.run({"type": "duplicate_check", "table": "Clienti",
+                      "column": "Nome", "key_column": "ID",
+                      "exceptions": ["MARIO"]})
+        values = [row[1] for row in res["rows"]]
+        self.assertTrue(values)  # Anna resta segnalata
+        self.assertTrue(all("Mario" != v for v in values))
+
+    def test_duplicates_exclude_conditions_in_sql(self):
+        db = FakeDB(); db.queue_fetch(["ID", "Nome"], [])
+        ex = ConditionExecutor(db)
+        ex.run({"type": "duplicate_check", "table": "Clienti", "column": "Nome",
+                "exclude_conditions": [{"column": "Stato", "operator": "=", "value": "OLD", "logic": "AND"}]})
+        sql, params = db.fetch_calls[0]
+        self.assertIn("AND NOT (([Stato] = ?))", sql)
+        self.assertEqual(params, ["OLD"])
+
+    def test_cross_table_exclusion_in_sql(self):
+        db = FakeDB(); db.queue_fetch(["ID"], [[1]])
+        ex = ConditionExecutor(db)
+        ex.run({
+            "type": "cross_table_existence", "source_table": "A", "key_source": "ID",
+            "conditions": [{"column": "ID", "operator": "IS NOT NULL", "value": "", "logic": "AND"}],
+            "exclude_conditions": [{"column": "Stato", "operator": "=", "value": "CHIUSO", "logic": "AND"}],
+            "destinations": [{"table": "B", "key": "IDA"}], "dest_logic": "ALMENO_UNA",
+        })
+        sql, params = db.fetch_calls[0]
+        self.assertIn("NOT ((s.[Stato] = ?))", sql)
+        self.assertEqual(params, ["CHIUSO"])
+
+    def test_value_comparison_exclusion_in_sql(self):
+        db = FakeDB(); db.queue_fetch(["ID", "Nome"], [])
+        ex = ConditionExecutor(db)
+        ex.run({"type": "value_comparison", "table": "Clienti",
+                "conditions": [{"column": "Citta", "operator": "=", "value": "Roma", "logic": "AND"}],
+                "exclude_conditions": [{"column": "Stato", "operator": "=", "value": "CHIUSO", "logic": "AND"}]})
+        sql, params = db.fetch_calls[0]
+        self.assertIn("NOT (([Stato] = ?))", sql)
+        self.assertEqual(params, ["Roma", "CHIUSO"])
+
+    def test_formula_exclusion_in_sql(self):
+        db = FakeDB(); db.queue_fetch(["ID"], [])
+        ex = ConditionExecutor(db)
+        ex.run({"type": "formula_condition", "table": "Clienti", "formula": "[Anno] = 2026",
+                "exclude_conditions": [{"column": "Stato", "operator": "=", "value": "OLD", "logic": "OR"}]})
+        sql, params = db.fetch_calls[0]
+        self.assertIn("AND NOT (([Stato] = ?))", sql)
+        self.assertEqual(params, ["OLD"])
+
+    def test_lookup_exclusion_in_sql(self):
+        db = FakeDB(); db.queue_fetch(["Nome"], [["Casa"]])
+        ex = ConditionExecutor(db)
+        ex.run({"type": "lookup_validation", "table": "Clienti", "column": "Nome",
+                "allowed_values": ["Via Roma"], "suggest_similar": False,
+                "exclude_conditions": [{"column": "Stato", "operator": "=", "value": "OLD", "logic": "AND"}]})
+        sql, params = db.fetch_calls[0]
+        self.assertIn("NOT (([Stato] = ?))", sql)
+        self.assertEqual(params, ["OLD"])
+
+    def test_row_cross_column_exclusion_in_sql(self):
+        db = FakeDB(); db.queue_fetch(["A", "B"], [])
+        ex = ConditionExecutor(db)
+        ex.run({"type": "row_cross_column_check", "table": "T",
+                "left_column": "DataScadenza", "operator": ">=", "right_column": "DataRegistrazione",
+                "exclude_conditions": [{"column": "Stato", "operator": "=", "value": "OLD", "logic": "AND"}]})
+        sql, params = db.fetch_calls[0]
+        self.assertIn("NOT (([Stato] = ?))", sql)
+        self.assertEqual(params, ["OLD"])
+
+    def test_aggregate_exclusion_in_sql(self):
+        db = FakeDB(); db.queue_fetch(["Diffusore", "AggVal"], [])
+        ex = ConditionExecutor(db)
+        ex.run({"type": "aggregate_threshold_check", "table": "Eventi",
+                "group_by": ["Diffusore"], "agg_function": "COUNT",
+                "operator": ">", "threshold": 2,
+                "exclude_conditions": [{"column": "Stato", "operator": "=", "value": "OLD", "logic": "AND"}]})
+        sql, params = db.fetch_calls[0]
+        self.assertIn("NOT (([Stato] = ?))", sql)
+        self.assertEqual(params, ["OLD", 2])  # OLD (esclusione) + soglia (HAVING)
+
+    def test_daily_coverage_exclusion_in_sql(self):
+        db = FakeDB(); db.queue_fetch(["Giorno"], [])
+        ex = ConditionExecutor(db)
+        ex.run({"type": "daily_coverage_check", "table": "Eventi", "day_column": "Giorno",
+                "expected_count": 7,
+                "exclude_conditions": [{"column": "Tipo", "operator": "=", "value": "BOZZA", "logic": "AND"}]})
+        sql, params = db.fetch_calls[0]
+        self.assertIn("NOT (([Tipo] = ?))", sql)
+        self.assertEqual(params, ["BOZZA"])
+
+    def test_mandatory_record_exclusion_in_sql(self):
+        db = FakeDB(); db.queue_fetch(["count"], [[0]])
+        ex = ConditionExecutor(db)
+        ex.run({"type": "mandatory_record_check", "table": "Diffusori",
+                "conditions": [{"column": "Mese", "operator": "=", "value": "giu", "logic": "AND"}],
+                "exclude_conditions": [{"column": "Stato", "operator": "=", "value": "OLD", "logic": "AND"}]})
+        sql, params = db.fetch_calls[0]
+        self.assertIn("NOT ((t1.[Stato] = ?))", sql)
+        self.assertEqual(params, ["giu", "OLD"])
+
+    def test_concat_similarity_exclusion_in_sql(self):
+        db = FakeDB(); db.queue_fetch(["ID", "Nome"], [])
+        ex = ConditionExecutor(db)
+        ex.run({"type": "concat_similarity",
+                "sources": [{"table": "Clienti", "column": "Nome", "key_column": "ID"}],
+                "threshold": 80,
+                "exclude_conditions": [{"column": "Stato", "operator": "=", "value": "OLD", "logic": "AND"}]})
+        sql, params = db.fetch_calls[0]
+        self.assertIn("NOT (([Stato] = ?))", sql)
+        self.assertEqual(params, ["OLD"])
 
 
 if __name__ == "__main__":
