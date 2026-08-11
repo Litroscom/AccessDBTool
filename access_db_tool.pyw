@@ -27,7 +27,7 @@ from storage import ConditionStore, MonitorLog, GroupStore, DatabaseRegistry
 from monitor_engine import MonitorEngine
 import ui_components
 from ui_components import (
-    NotificationPopup, ColumnSelector, MultiConditionBuilder,
+    ColumnSelector, MultiConditionBuilder,
     ConditionSaveDialog, RecordEditorDialog, GroupSelector,
     DependentConditionBuilder, RowCrossColumnBuilder,
     LookupValidationBuilder, AggregateThresholdBuilder,
