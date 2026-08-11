@@ -186,11 +186,14 @@ class DashboardView(ttk.Frame):
                 state_data = self.batch_ctrl.dashboard_state_for_condition(cond) if self.batch_ctrl else {}
                 result = state_data.get("result")
                 if result:
-                    # Collega la condizione al risultato: porta con sé il
-                    # database_label, così la modifica diretta di un record
-                    # scrive sul DB giusto (la dashboard è multi-DB).
-                    if isinstance(result, dict) and "_condition" not in result:
+                    # Collega condizione E TIPO al risultato: porta con sé il
+                    # database_label (modifica record sul DB giusto) e il tipo
+                    # (menu esclusioni corretto). Senza _condition_type il menu
+                    # destro usava lo stale active_ctype del builder -> modalità
+                    # esclusione sbagliata per risultati similarity.
+                    if isinstance(result, dict):
                         result["_condition"] = cond
+                        result["_condition_type"] = cond.get("type", "")
                     self.state.current_result = result
                     self.results_view.show_results(result)
         except Exception:

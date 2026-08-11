@@ -1416,6 +1416,22 @@ class BugFixRegressionTests(unittest.TestCase):
         self.assertEqual(db.fetch_calls[1][1], [1])  # IN (?) senza None
 
     # --- Bug 13: _concat_sim salta chiavi None ---
+    def test_dashboard_result_prefers_attached_condition_type(self):
+        # _on_select della dashboard ora allega _condition_type al risultato:
+        # il menu esclusioni deve usare QUELLO, non lo stale active_ctype.
+        from app.controllers.result_controller import ResultController
+        state = SimpleNamespace(
+            current_result={
+                "source_table": "Clienti", "columns": ["ID", "Nome"], "rows": [],
+                "_condition_type": "similarity_check",
+            },
+            active_ctype="duplicate_check",  # valore stantio: deve essere ignorato
+        )
+        ctrl = ResultController(state)
+        self.assertEqual(ctrl._current_result_condition_type(), "similarity_check")
+        # con un risultato similarity il menu esclusioni corretto è quello a 4 mode
+        self.assertTrue(ctrl.result_supports_direct_update())
+
     def test_concat_similarity_skips_null_keys(self):
         db = FakeDB()
         db.queue_fetch(["ID", "Nome"], [[None, "Mario"], [1, "Mario"]])
