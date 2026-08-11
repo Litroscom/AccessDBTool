@@ -45,12 +45,29 @@ class MonitorView(ttk.Frame):
         bb.pack(fill=tk.X)
         ttk.Button(bb, text="AVVIA MONITOR", command=self._start, bootstyle="success").pack(side=tk.LEFT, padx=4)
         ttk.Button(bb, text="FERMA", command=self._stop, bootstyle="danger-outline").pack(side=tk.LEFT, padx=4)
+
+        # Intervallo tra un ciclo e il successivo (configurabile)
+        ttk.Label(bb, text="Intervallo:").pack(side=tk.LEFT, padx=(12, 2))
+        self.var_interval = tk.StringVar(value="10 min")
+        self.cmb_interval = ttk.Combobox(
+            bb, textvariable=self.var_interval, state="readonly", width=8,
+            values=["1 min", "5 min", "10 min", "30 min", "60 min"],
+        )
+        self.cmb_interval.pack(side=tk.LEFT)
+
         ttk.Button(bb, text="PULISCI LOG", command=self._clear, bootstyle="secondary-outline").pack(side=tk.RIGHT, padx=4)
         self._refresh_state_label()
 
     def _start(self):
-        self.app_ctrl.start_monitor()
+        self.app_ctrl.start_monitor(interval_min=self._interval_min())
         self._refresh_state_label()
+
+    def _interval_min(self):
+        val = str(self.var_interval.get()).split()[0] if self.var_interval.get() else "10"
+        try:
+            return max(1, int(val))
+        except ValueError:
+            return 10
 
     def _stop(self):
         self.app_ctrl.stop_monitor()
@@ -85,13 +102,16 @@ class MonitorView(ttk.Frame):
         for entry in getattr(log, "entries", []) if log else []:
             name = entry.get("name") or entry.get("check") or "?"
             count = entry.get("count", 0)
-            if entry.get("type") == "check_error":
+            if entry.get("type") == "check_error" or entry.get("is_error"):
                 status = "Errore"
             elif count and count > 0:
                 status = "Trovati"
             else:
                 status = "OK"
-            self.add_row(("", name, status, count))
+            # ora salvata nel log (isoformat "...T08:12:33...") -> HH:MM:SS
+            t = str(entry.get("time", "") or "")
+            ora = t[11:19] if len(t) >= 19 and "T" in t[10:11] else ""
+            self.add_row((ora, name, status, count))
 
     def _clear(self):
         self.mon_tree.delete(*self.mon_tree.get_children())

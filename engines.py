@@ -300,7 +300,11 @@ class ConditionExecutor:
             return self._error(str(e))
 
     def _error(self, msg):
-        return {"title": "ERRORE", "description": msg, "columns": ["Errore"], "rows": [[msg]], "count": 0, "source_table": ""}
+        # 'is_error' distingue gli errori reali dai risultati vuoti: senza
+        # questo marker, monitor e dashboard mostravano un controllo fallito
+        # (SQL, parametri…) come "OK" perché count==0.
+        return {"title": "ERRORE", "description": msg, "columns": ["Errore"],
+                "rows": [[msg]], "count": 0, "source_table": "", "is_error": True}
 
     def _result(self, title, desc, cols, rows, table):
         return {"title": title, "description": desc, "columns": cols, "rows": rows, "count": len(rows), "source_table": table}

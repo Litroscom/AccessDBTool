@@ -158,7 +158,7 @@ class BatchController:
                         res["_condition"] = dict(cond)
                         res["_condition_type"] = cond.get("type")
                     count = res.get("count", 0)
-                    tag = "error" if count > 0 else "ok"
+                    tag = "error" if (res.get("is_error") or count > 0) else "ok"
                     state = {"count": count, "status": "Completato", "tag": tag, "result": res}
                     self.state.set_dash_state(self.condition_cache_key(cond), state)
                     self._log(f"{name} -> {count} anomalie")
@@ -199,7 +199,7 @@ class BatchController:
                 res["_condition"] = cond
                 res["_condition_type"] = cond.get("type")
             count = res.get("count", 0)
-            tag = "error" if count > 0 else "ok"
+            tag = "error" if (res.get("is_error") or count > 0) else "ok"
             self.set_dashboard_state(cond, count, "Completato", tag, result=res)
             self._log(f"{name} -> {count} anomalie")
             self._safe(self.result_ctrl._notify_results, res)

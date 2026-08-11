@@ -1726,5 +1726,140 @@ class ExclusionFlowTests(unittest.TestCase):
         self.assertEqual(params, ["OLD"])
 
 
+class MonitorFlowTests(unittest.TestCase):
+    """Verifica del monitor: errori reali non mostrati come OK, stato
+    indicator, intervallo configurabile, stop al cambio database."""
+
+    def test_error_result_marker_set_by_executor(self):
+        db = FakeDB()
+        ex = ConditionExecutor(db)
+        res = ex.run({"type": "tipo_sconosciuto"})
+        self.assertEqual(res["title"], "ERRORE")
+        self.assertTrue(res.get("is_error"))  # marker per monitor/dashboard
+
+    def test_monitor_flags_error_result_as_error(self):
+        from monitor_engine import MonitorEngine
+
+        class FakeExec:
+            def run(self, _cond):
+                return {"title": "ERRORE", "description": "sql", "columns": ["Errore"],
+                        "rows": [["sql"]], "count": 0, "is_error": True}
+
+        q = queue.Queue()
+        mon = MonitorEngine(None, FakeExec(), q)
+        self.assertTrue(mon.start([{"name": "C1", "type": "value_comparison"}]))
+        entry = None
+        import time
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                m = q.get_nowait()
+            except queue.Empty:
+                time.sleep(0.05)
+                continue
+            if m.get("type") == "check_result":
+                entry = m
+                break
+        mon.stop()
+        self.assertIsNotNone(entry, "nessun check_result ricevuto")
+        self.assertTrue(entry["has_errors"], "errore mostrato come OK")
+        self.assertEqual(entry["count"], 0)
+
+    def test_monitor_ok_result_not_flagged(self):
+        from monitor_engine import MonitorEngine
+
+        class FakeExec:
+            def run(self, _cond):
+                return {"title": "OK", "columns": [], "rows": [], "count": 0}
+
+        q = queue.Queue()
+        mon = MonitorEngine(None, FakeExec(), q)
+        mon.start([{"name": "C1", "type": "value_comparison"}])
+        import time
+        deadline = time.time() + 5
+        entry = None
+        while time.time() < deadline:
+            try:
+                m = q.get_nowait()
+            except queue.Empty:
+                time.sleep(0.05)
+                continue
+            if m.get("type") == "check_result":
+                entry = m
+                break
+        mon.stop()
+        self.assertIsNotNone(entry)
+        self.assertFalse(entry["has_errors"])
+
+    def test_batch_tags_error_result_as_error(self):
+        from app.controllers.batch_controller import BatchController
+
+        class FakeState:
+            def __init__(self):
+                self.dash_state_by_key = {}
+                self.batch_running = False
+
+            def set_dash_state(self, key, value):
+                self.dash_state_by_key[key] = value
+
+            def get_dash_state(self, key, default=None):
+                return self.dash_state_by_key.get(key, default)
+
+            def dash_state_snapshot(self):
+                return dict(self.dash_state_by_key)
+
+        class FakeDbCtrl:
+            def ensure_active_database_for_label(self, label, interactive=False):
+                return True
+
+        class FakeResultCtrl:
+            def _notify_results(self, res):
+                pass
+
+        state = FakeState()
+        state.executor = SimpleNamespace(
+            run=lambda c: {"title": "ERRORE", "count": 0, "is_error": True,
+                           "columns": [], "rows": []},
+        )
+        batch = BatchController(state, FakeDbCtrl(), FakeResultCtrl())
+        cond = {"name": "C", "type": "value_comparison", "table": "T"}
+        batch._execute_dashboard_task(cond)
+        key = batch.condition_cache_key(cond)
+        self.assertEqual(state.dash_state_by_key[key]["tag"], "error")
+
+    def test_handle_monitor_message_marks_error_row(self):
+        from app.controllers.app_controller import AppController
+        rows = []
+        state = SimpleNamespace(
+            status=SimpleNamespace(set=lambda v: None),
+            mon_log=None,
+            monitor_queue=queue.Queue(),
+        )
+        ctrl = AppController(state, None)
+        ctrl.set_monitor_row_callback(lambda row: rows.append(row))
+        ctrl._handle_monitor_msg({
+            "type": "check_result", "name": "C", "count": 0,
+            "is_error": True, "sound": True,
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][2], "Errore")  # non "OK"
+
+    def test_monitor_interval_configurable(self):
+        from app.controllers.app_controller import AppController
+        state = SimpleNamespace(
+            db=SimpleNamespace(connected=True),
+            store=SimpleNamespace(items=[{"name": "C"}]),
+            monitor=SimpleNamespace(
+                configure=lambda conditions, interval_min, sound: setattr(
+                    self, "_configured", (len(conditions), interval_min, sound)),
+                start=lambda: True,
+            ),
+            status=SimpleNamespace(set=lambda v: None),
+        )
+        ctrl = AppController(state, None)
+        self.assertTrue(ctrl.start_monitor(interval_min=5))
+        self.assertEqual(self._configured, (1, 5, True))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -93,11 +93,12 @@ class MonitorEngine:
                         "title": result.get("title", ""),
                         "columns": result.get("columns", []),
                         "rows": result.get("rows", [])[:50],
-                        "has_errors": result.get("count", 0) > 0,
-                        "sound": self.sound_enabled
+                        # un risultato di ERRORE (SQL/parametri) non va mostrato come OK
+                        "has_errors": bool(result.get("is_error") or result.get("count", 0) > 0),
+                        "sound": self.sound_enabled and result.get("count", 0) > 0
                     }
                     self.queue.put(entry)
-                    if result.get("count", 0) > 0:
+                    if entry["has_errors"]:
                         cycle_errors.append(entry)
                 except Exception as e:
                     import traceback

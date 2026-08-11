@@ -85,6 +85,9 @@ class App(tk.Tk):
         self.state.result_ctrl = self.result_ctrl
         self.batch_ctrl = BatchController(self.state, self.db_ctrl, self.result_ctrl)
         self.app_ctrl = AppController(self.state, self.db_ctrl)
+        # Monitor: indica ON/OFF nella status bar e si ferma al cambio DB
+        self.app_ctrl.set_monitor_state_callback(self._set_mon_indicator)
+        self.db_ctrl.set_active_db_switched_callback(self._on_active_db_switched)
 
         # Auto-switch al tab Dashboard quando ci sono risultati
         self.result_ctrl.set_results_found_callback(self._auto_show_results)
@@ -438,10 +441,24 @@ class App(tk.Tk):
             self.current_view.refresh()
         self._refresh_header_db()
 
+    def _set_mon_indicator(self, state):
+        if not hasattr(self, "mon_indicator"):
+            return
+        if state == "running":
+            self.mon_indicator.config(text=" MONITOR ON ", bootstyle="inverse-success")
+        else:
+            self.mon_indicator.config(text=" MONITOR OFF ", bootstyle="inverse-danger")
+
+    def _on_active_db_switched(self):
+        """Il database attivo è cambiato: il monitor girava sul file precedente,
+        le sue condizioni non valgono più -> fermalo e aggiorna l'indicatore."""
+        self.app_ctrl.stop_monitor()
+        self._set_mon_indicator("stopped")
+        self.state.status.set("Monitor fermato: database cambiato.")
+
     def _start_monitor(self):
         if self.app_ctrl.start_monitor():
-            if self.mon_indicator:
-                self.mon_indicator.config(text=" MONITOR ON ", bootstyle="inverse-success")
+            self._set_mon_indicator("running")
 
     def _run_profiler_from_view(self):
         self.db_ctrl.run_profiler()

@@ -11,9 +11,14 @@ class AppController:
         self.db_ctrl = db_controller
         self._on_tab_switch_callback = None
         self._mon_row_cb = None
+        self._mon_state_cb = None
 
     def set_tab_switch_callback(self, callback):
         self._on_tab_switch_callback = callback
+
+    def set_monitor_state_callback(self, callback):
+        """View hook: riceve 'running'/'stopped' quando lo stato del monitor cambia."""
+        self._mon_state_cb = callback
 
     def set_monitor_row_callback(self, callback):
         """View hook: receives a (time, name, status, count) tuple per monitor result row."""
@@ -79,6 +84,11 @@ class AppController:
         msg_type = m.get("type")
         if msg_type == "status":
             self.state.status.set(m.get("msg", "Monitor"))
+            if self._mon_state_cb:
+                try:
+                    self._mon_state_cb("running" if m.get("running") else "stopped")
+                except Exception:
+                    pass
             return
         if msg_type == "cycle_start":
             self.state.status.set(f"Monitor: avvio ciclo su {m.get('total', 0)} controlli")
@@ -102,7 +112,10 @@ class AppController:
         if msg_type == "check_result":
             name = m.get("name") or m.get("check") or "?"
             count = m.get("count", 0)
-            status = "Trovati" if count > 0 else "OK"
+            if m.get("is_error"):
+                status = "Errore"
+            else:
+                status = "Trovati" if count > 0 else "OK"
             if self._mon_row_cb:
                 self._mon_row_cb((event_time, name, status, count))
             if mon_log:
@@ -125,14 +138,17 @@ class AppController:
             )
             return
 
-    def start_monitor(self):
+    def start_monitor(self, interval_min=10):
         if not self.state.db.connected:
             from tkinter import messagebox
             return messagebox.showwarning("!", "Apri un Database prima di avviare il monitor.")
         if not self.state.store.items:
             from tkinter import messagebox
             return messagebox.showwarning("!", "Salva almeno una condizione prima di avviare il monitor.")
-        if self.state.monitor.start(self.state.store.items):
+        self.state.monitor.configure(
+            self.state.store.items, interval_min, sound=True,
+        )
+        if self.state.monitor.start():
             self.state.status.set("Monitor avviato.")
             return True
         self.state.status.set("Monitor non avviato.")

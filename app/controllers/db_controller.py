@@ -8,6 +8,11 @@ logger = logging.getLogger("AccessDBTool.DBController")
 class DBController:
     def __init__(self, state):
         self.state = state
+        self._on_active_db_switched = None
+
+    def set_active_db_switched_callback(self, callback):
+        """Chiamato quando il database attivo CAMBIA (es. aperto un altro file)."""
+        self._on_active_db_switched = callback
 
     def suggest_database_label(self, path):
         return os.path.basename(str(path or "").strip())
@@ -28,8 +33,16 @@ class DBController:
             view_refresh()
 
     def connect_active_database(self, path, database_label=""):
-        if self.state.db.connected and self.state.db.db_path != path:
+        switched = self.state.db.connected and self.state.db.db_path != path
+        if switched:
+            # Cambio database a monitor attivo: le condizioni salvate girerebbero
+            # sul file sbagliato -> ferma il monitor (il chiamante lo notifica).
             self.state.db.disconnect()
+            if self._on_active_db_switched:
+                try:
+                    self._on_active_db_switched()
+                except Exception:
+                    pass
         self.state.db.connect(path)
         label = self.register_database_reference(database_label, path)
         self.state.current_db_label = label
