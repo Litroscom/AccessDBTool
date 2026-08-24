@@ -315,15 +315,6 @@ class App(tk.Tk):
         else:
             self.lbl_header_db.config(text="Nessun database aperto — usa il tab Database")
 
-    def _switch_tab(self, tab_id):
-        self.current_view = self.app_ctrl.switch_tab(
-            tab_id, self.nav_buttons, self.main_panel
-        )
-        if self.current_view:
-            self._wire_view_callbacks(tab_id)
-        if hasattr(self, "lbl_page_title"):
-            self.lbl_page_title.config(text=self._PAGE_TITLES.get(tab_id, ""))
-        self._refresh_header_db()
 
     def _build_status_bar(self, parent):
         sb = ttk.Frame(parent, bootstyle="dark")

@@ -19,7 +19,6 @@ class BuilderView(ttk.Frame):
         self.library_ctrl = library_controller
         self.result_ctrl = result_controller or getattr(state, "result_ctrl", None)
         self._sections = {}
-        self._filtro_widget = None
         self._periodicita_data = None
         self._build_ui()
 
@@ -65,12 +64,13 @@ class BuilderView(ttk.Frame):
         self.form_canvas.bind("<Enter>", lambda _e: self._bind_mousewheel())
         self.form_canvas.bind("<Leave>", lambda _e: self._unbind_mousewheel())
 
-        # Sezioni in ordine di flusso, numerate per chiarezza
+        # Sezioni in ordine di flusso, numerate per chiarezza.
+        # NOTA: i filtri e le esclusioni si gestiscono INLINE in ciascun
+        # builder (sezione 1) — una sola fonte di verità, niente doppi editor.
         self._create_section("base",        "1 \u00b7 Configurazione del controllo")
-        self._create_section("filtri",      "2 \u00b7 Filtri aggiuntivi (facoltativi)")
-        self._create_section("report",      "3 \u00b7 Colonne da mostrare nel report")
-        self._create_section("periodicita", "4 \u00b7 Promemoria di aggiornamento (facoltativo)")
-        for section_id in ("base", "filtri", "report", "periodicita"):
+        self._create_section("report",      "2 \u00b7 Colonne da mostrare nel report")
+        self._create_section("periodicita", "3 \u00b7 Promemoria di aggiornamento (facoltativo)")
+        for section_id in ("base", "report", "periodicita"):
             self._build_section_content(section_id)
             self._sections[section_id]["built"] = True
 
@@ -165,45 +165,10 @@ class BuilderView(ttk.Frame):
         except Exception as e:
             logger.debug("_update_scrollregion errore: %s", e)
 
-    def _sync_accordion_from_builder(self):
-        """Dopo set_config(), aggiorna i widget accordion Filtri/Esclusioni
-        con i dati correnti del builder attivo. Se i widget non esistono ancora
-        (es. prima apertura), forza la costruzione della sezione."""
-        if not self.state.active_builder:
-            return
-        config = self.state.active_builder.get_config()
-        table = config.get("table", "")
-        # Filtri
-        if self._filtro_widget is not None:
-            try:
-                self._filtro_widget.set_config({
-                    "table": table,
-                    "conditions": config.get("conditions", []),
-                })
-            except Exception:
-                pass
-        elif self._sections.get("filtri", {}).get("expanded"):
-            # Sezione espansa ma widget perso: ricostruisci
-            section = self._sections["filtri"]
-            for w in section["body"].winfo_children():
-                w.destroy()
-            section["built"] = False
-            self._build_section_content("filtri")
-            section["built"] = True
-        # Nota: le esclusioni sono gestite inline da ogni builder (pulsante
-        # "+ Esclusione" contestuale), quindi non esiste piu' una sezione
-        # accordion dedicata che duplicava quell'UI.
-
-    def _toggle_accordion(self, section_id):
-        """Compat: le sezioni sono sempre visibili in Beta, niente da fare."""
-        self._update_scrollregion()
-
     def _build_section_content(self, section_id):
         body = self._sections[section_id]["body"]
         if section_id == "base":
             self._build_section_base(body)
-        elif section_id == "filtri":
-            self._build_section_filtri(body)
         elif section_id == "report":
             self._build_section_report(body)
         elif section_id == "periodicita":
@@ -216,43 +181,6 @@ class BuilderView(ttk.Frame):
             self.state.active_builder.pack(fill=tk.BOTH, expand=True)
         else:
             ttk.Label(body, text="Seleziona un tipo analisi per iniziare.").pack()
-
-    def _build_section_filtri(self, body):
-        if not self.state.active_builder:
-            ttk.Label(body, text="Configura prima la sezione Base.").pack(pady=20)
-            return
-        try:
-            config = self.state.active_builder.get_config()
-        except Exception:
-            ttk.Label(body, text="Questo tipo di controllo non supporta filtri aggiuntivi.").pack(pady=20)
-            return
-
-        # Questi controlli definiscono la propria logica (formula / SE...ALLORA):
-        # mostrare un builder di filtri vuoto sarebbe fuorviante.
-        if self.state.active_ctype in ("formula_condition", "dependent_condition_check"):
-            ttk.Label(
-                body,
-                text="Questo controllo definisce la propria logica (formula SQL / SE...ALLORA):\n"
-                     "non sono necessari filtri aggiuntivi.",
-                foreground="gray", justify=tk.LEFT,
-            ).pack(pady=16, padx=4)
-            return
-
-        table = config.get("table", "")
-        conditions = config.get("conditions", [])
-
-        filtro = MultiConditionBuilder(
-            body, self.state.db,
-            on_table_change=self._on_builder_table_change,
-            title="Filtri (AND/OR)",
-            show_table=False,
-        )
-        filtro.pack(fill=tk.BOTH, expand=True)
-        filtro.set_config({
-            "table": table,
-            "conditions": conditions,
-        })
-        self._filtro_widget = filtro
 
     def _build_section_report(self, body):
         # Il ColumnSelector va creato nel parent finale (body): pack(in_=...)
@@ -360,14 +288,6 @@ class BuilderView(ttk.Frame):
         except Exception:
             return
 
-        if self._filtro_widget is not None:
-            try:
-                filtri = self._filtro_widget.get_conditions()
-                config["conditions"] = filtri
-            except Exception:
-                pass
-
-        # Le esclusioni sono gestite inline da ogni builder (pulsante
         # "+ Esclusione" contestuale): niente da sincronizzare qui.
 
         if hasattr(self, "_var_periodic_enabled"):
@@ -433,15 +353,6 @@ class BuilderView(ttk.Frame):
 
     def _on_builder_table_change(self, table):
         self.state.sel_tables = [table]
-        # I filtri dell'accordion ereditano la tabella dal builder principale.
-        # Senza questo allineamento si potevano selezionare colonne di una
-        # tabella e applicarle poi alla precedente al momento dell'esecuzione.
-        if self._filtro_widget is not None:
-            try:
-                if self._filtro_widget.var_table.get() != table:
-                    self._filtro_widget.set_table(table)
-            except Exception as e:
-                logger.debug("sincronizzazione tabella filtri fallita: %s", e)
         if hasattr(self, "col_selector") and self.col_selector and self.state.db:
             # Preserva le selezioni correnti: set_columns distrugge e ricrea
             # tutte le checkbox, ma vogliamo mantenere le scelte dell'utente.
@@ -543,19 +454,6 @@ class BuilderView(ttk.Frame):
                 logger.error("pack del builder fallito: %s", _e)
         self._update_scrollregion()
 
-    def _show_base(self):
-        base = self._sections["base"]
-        for w in base["body"].winfo_children():
-            w.destroy()
-        base["built"] = False
-        if not base["expanded"]:
-            base["body"].pack(fill=tk.BOTH, expand=True)
-            base["expanded"] = True
-            base["header"].configure(bootstyle="primary")
-        self._build_section_base(base["body"])
-        base["built"] = True
-        self._update_scrollregion()
-
     def load_condition(self, cond):
         """Carica una condizione (dict) nel builder: costruisce il widget del
         tipo corretto e ne applica la configurazione. Usato sia dal pulsante
@@ -588,9 +486,6 @@ class BuilderView(ttk.Frame):
                             cfg_after.get("exclude_conditions"), cfg_after.get("exceptions", [])[:5])
             except Exception as e:
                 logger.warning("set_config in load_condition fallita: %s", e)
-        # Dopo set_config, sincronizza i widget accordion (Filtri/Esclusioni)
-        # con i dati appena caricati nel builder
-        self._sync_accordion_from_builder()
         # Allinea il selettore colonne report alla tabella ripristinata.
         if table and getattr(self, "col_selector", None) and self.state.db:
             try:
@@ -627,7 +522,6 @@ class BuilderView(ttk.Frame):
         self.state.loaded_condition_idx = None
         # Ricostruisci subito le sezioni con il placeholder (sezioni sempre
         # visibili: non restano vuote dopo "Pulisci").
-        self._filtro_widget = None
         for section_id in list(self._sections.keys()):
             section = self._sections[section_id]
             for w in section["body"].winfo_children():
@@ -726,10 +620,9 @@ class BuilderView(ttk.Frame):
 
     def _invalidate_accordion_sections(self):
         """Ricostruisce SUBITO le sezioni dipendenti dal builder attivo
-        (filtri, periodicità). In Beta le sezioni sono sempre visibili:
+        (periodicità). In Beta le sezioni sono sempre visibili:
         niente costruzione lazy al toggle, quindi si ricostruisce qui."""
-        self._filtro_widget = None
-        for section_id in ("filtri", "periodicita"):
+        for section_id in ("periodicita",):
             section = self._sections.get(section_id)
             if section is None:
                 continue
@@ -743,7 +636,7 @@ class BuilderView(ttk.Frame):
         """Compat: in Beta le sezioni sono sempre visibili; assicura solo che
         il contenuto sia costruito (utile al primo caricamento di una
         condizione salvata)."""
-        for section_id in ("filtri", "periodicita"):
+        for section_id in ("periodicita",):
             section = self._sections.get(section_id)
             if section is None:
                 continue

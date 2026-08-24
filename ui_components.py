@@ -1652,12 +1652,81 @@ class ConcatSimilarityBuilder(ttk.Frame):
         ttk.Button(self, text="+ Aggiungi esclusione record",
                    command=self._add_exclude_cond_row).grid(row=9, column=0, columnspan=2, sticky="w", pady=(2, 4))
 
+        # --- Filtri pre-analisi (opzionale) ---
+        ttk.Separator(self, orient="horizontal").grid(row=10, column=0, columnspan=2, sticky="ew", pady=(8, 4))
+        frm_filt_hdr = ttk.Frame(self)
+        frm_filt_hdr.grid(row=11, column=0, columnspan=2, sticky="ew")
+        ttk.Label(frm_filt_hdr, text="Filtri (opzionale):",
+                  font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        ttk.Label(frm_filt_hdr,
+                  text="  Limita la ricerca a un sottoinsieme di record (es. solo un mese).",
+                  foreground="gray", font=("Segoe UI", 8, "italic")).pack(side=tk.LEFT)
+        self._filter_rows = []
+        self._frm_filters = ttk.Frame(self)
+        self._frm_filters.grid(row=12, column=0, columnspan=2, sticky="ew", padx=(10, 0))
+        ttk.Button(self, text="+ Aggiungi filtro",
+                   command=self._add_filter_row).grid(row=13, column=0, columnspan=2, sticky="w", pady=(2, 4))
+
+    def _add_filter_row(self, col="", op="=", val="", logic="AND"):
+        frm = ttk.Frame(self._frm_filters)
+        frm.pack(fill=tk.X, pady=1)
+        cols_list = self.db.columns(self.var_table.get()) if (self.db and self.var_table.get()) else []
+        logic_var = tk.StringVar(value=logic)
+        if self._filter_rows:
+            ttk.Combobox(frm, textvariable=logic_var, values=constants.LOGIC_OPS,
+                         state="readonly", width=5).pack(side=tk.LEFT, padx=2)
+        else:
+            ttk.Label(frm, text="FILTRO", width=7).pack(side=tk.LEFT, padx=2)
+        var_col = tk.StringVar(value=col)
+        cmb_col = ttk.Combobox(frm, textvariable=var_col, values=cols_list, width=18)
+        cmb_col.pack(side=tk.LEFT, padx=2)
+        var_op = tk.StringVar()
+        ops = [k + "  (" + v + ")" for k, v in constants.OPERATORS.items()]
+        op_display = op + "  (" + constants.OPERATORS.get(op, "") + ")" if op in constants.OPERATORS else op
+        var_op.set(op_display)
+        ttk.Combobox(frm, textvariable=var_op, values=ops, state="readonly", width=22).pack(side=tk.LEFT, padx=2)
+        var_val = tk.StringVar(value=val)
+        ttk.Entry(frm, textvariable=var_val, width=18).pack(side=tk.LEFT, padx=2)
+        row_dict = {"frm": frm, "logic": logic_var, "cmb_col": cmb_col,
+                    "col": var_col, "op": var_op, "val": var_val}
+        ttk.Button(frm, text="✕", width=2,
+                   command=lambda r=row_dict: self._remove_filter_row(r)).pack(side=tk.LEFT)
+        self._filter_rows.append(row_dict)
+
+    def _remove_filter_row(self, row_dict):
+        row_dict["frm"].destroy()
+        self._filter_rows.remove(row_dict)
+
+    def get_conditions(self):
+        result = []
+        for row in self._filter_rows:
+            c = row["col"].get().strip()
+            op = row["op"].get().split("  (")[0].strip()
+            v = row["val"].get()
+            logic = row["logic"].get()
+            if c and op:
+                result.append({"column": c, "operator": op, "value": v, "logic": logic})
+        return result
+
+    def set_conditions(self, conditions):
+        for row in list(self._filter_rows):
+            self._remove_filter_row(row)
+        for cond in conditions:
+            self._add_filter_row(
+                col=cond.get("column", ""),
+                op=cond.get("operator", "="),
+                val=str(cond.get("value", "")),
+                logic=cond.get("logic", "AND"),
+            )
+
     def _on_table_sel(self, _evt=None):
         t = self.var_table.get()
         if t and self.db:
             cols = self.db.columns(t)
             self.cmb_key["values"] = cols
             for row in self._exclude_cond_rows:
+                row["cmb_col"]["values"] = cols
+            for row in self._filter_rows:
                 row["cmb_col"]["values"] = cols
             if self.on_table_change: self.on_table_change(t)
 
@@ -1682,6 +1751,9 @@ class ConcatSimilarityBuilder(ttk.Frame):
         excl_conds = self.get_exclude_conditions()
         if excl_conds:
             cfg["exclude_conditions"] = excl_conds
+        conditions = self.get_conditions()
+        if conditions:
+            cfg["conditions"] = conditions
         return cfg
 
     def set_config(self, c):
@@ -1695,6 +1767,7 @@ class ConcatSimilarityBuilder(ttk.Frame):
         self.txt_exc.delete("1.0", tk.END)
         self.txt_exc.insert("1.0", "\n".join(c.get("exceptions", [])))
         self.set_exclude_conditions(c.get("exclude_conditions", []))
+        self.set_conditions(c.get("conditions", []))
 
     def _add_exclude_cond_row(self, col="", op="=", val=""):
         frm = ttk.Frame(self._frm_exclude_conds)
