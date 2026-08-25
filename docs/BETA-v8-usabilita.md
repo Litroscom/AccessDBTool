@@ -1,5 +1,8 @@
 # Beta v8.0 — Redesign usabilità (ramo `beta`)
 
+> 📌 **Stato completo e istruzioni di ripresa:** vedi
+> [`BETA-v8-status-e-riprendibilita.md`](BETA-v8-status-e-riprendibilita.md)
+
 Ramo parallelo di sviluppo: la versione attuale (v7.4) resta su `main`.
 Tutte le funzionalità esistenti rimangono valide: qui è cambiata solo la
 **presentazione e l'organizzazione dell'interfaccia**, più i fix di
