@@ -4,6 +4,7 @@ monitor_log.json
 saved_conditions.json
 condition_groups.json
 database_registry.json
+scratch/
 build/
 dist/
 __pycache__/
