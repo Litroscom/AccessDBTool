@@ -502,6 +502,14 @@ app.destroy()
 
 - [ ] **Step 2: Misurare**
 
+Lo script misura DUE colonne separate — `switch` (`_switch_tab` sola) e
+`update` (`app.update()`, rendering Tk) — con mediana su 5 giri dopo un
+riscaldamento che crea tutte e quattro le view. La soglia dei 50 ms vale solo
+sulla colonna `switch`: il repaint costava 37-187 ms anche prima di questo
+branch, quindi non è un criterio sul lavoro svolto dal codice ma informazione
+sul costo del toolkit. Lo script stampa `BUDGET switch<50ms: OK|FAIL` ed esce
+con codice 1 in caso di FAIL.
+
 Run: `python tests/bench_tabs.py`
 Expected: la **seconda** visita a ogni tab sotto **50 ms** (baseline pre-modifica: 170-594 ms). Se un tab resta sopra, la sua `refresh()` sta ricostruendo widget: va ridotta a un aggiornamento in place.
 
