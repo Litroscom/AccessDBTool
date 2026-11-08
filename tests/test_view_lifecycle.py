@@ -73,6 +73,7 @@ class ViewLifecycleTests(unittest.TestCase):
 
     def test_batch_log_during_tab_switch_lands_on_live_dashboard(self):
         app = self.app
+        app._switch_tab("dashboard")
         app._switch_tab("controls")
         app.batch_ctrl._on_log("messaggio di prova")
         app.update()
