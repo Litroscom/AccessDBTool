@@ -199,3 +199,35 @@ estensione di questo branch.
   (`db_controller.py:48`, `batch_controller.py:196`) — preesistenti, fuori scope.
 - `ensure_active_builder_from_result` è codice morto senza chiamanti.
 - `_run_profiler_from_view` aggiorna solo la view attiva, non tutte.
+
+---
+
+## Esperimento successivo: view impilate + `tkraise()` (branch `exp/tkraise-stack`)
+
+L'ipotesi lasciata aperta sopra è stata verificata e **confermata**: il costo del
+repaint non era il "ridisegnare", era il **rimappare** (`pack_forget` smonta il
+sottoalbero, `pack` lo rimonta).
+
+**Meccanismo nuovo:** le view si agganciano tutte alla stessa cella
+(`grid(row=0, column=0, sticky="nsew")`, con `grid_rowconfigure/grid_columnconfigure`
+pesati sull'host) e il cambio tab è `view.tkraise()`. Nessun unmap/remap: i
+sottotree restano montati e cambia solo l'ordine di impilamento. La view in cima
+è l'ultimo figlio in `main_panel.winfo_children()`.
+
+**A/B a tre vie** (stessa macchina, finestra visibile, 5 giri, mediane,
+switch + repaint successivo):
+
+| Tab | prima del blocco (ricostruzione) | view persistenti `pack` | **impilate + `tkraise`** |
+|---|---|---|---|
+| Controlli | 751 ms | 618 ms | **115 ms** |
+| Dashboard | 619 ms | 459 ms | **104 ms** |
+| Monitor | 339 ms | 201 ms | **62 ms** |
+| Database | 362 ms | 248 ms | **82 ms** |
+
+Il `pack` da solo non bastava a rendere il cambio tab "immediato": guadagnava
+sulla logica di switch (3-4 ms) ma il repaint peggiorava. Con `tkraise` il
+repaint scende a 57-105 ms e il totale è 6-7x il baseline.
+
+Suite completa verde (147 test) anche con il nuovo meccanismo; le asserzioni
+"esattamente una view impacchettata" sono state sostituite da "la view attiva è
+quella in cima" e "tutte le view restano montate".
