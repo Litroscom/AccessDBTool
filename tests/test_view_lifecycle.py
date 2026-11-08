@@ -80,3 +80,26 @@ class ViewLifecycleTests(unittest.TestCase):
         dash = app.views["dashboard"]
         self.assertIn("messaggio di prova", dash.log_text.get("1.0", "end"))
         self.assertEqual(len(app.main_panel.pack_slaves()), 1)
+
+    def test_active_builder_survives_tab_switch(self):
+        app = self.app
+        app._switch_tab("controls")
+        view = app.views["controls"]
+        view.load_condition({
+            "type": "similarity_check", "name": "QA Sim", "table": "Clienti",
+            "column": "Nome", "key_column": "ID", "threshold": 80,
+        })
+        builder = app.state.active_builder
+        self.assertIsNotNone(builder)
+        app._switch_tab("dashboard")
+        app._switch_tab("controls")
+        self.assertIs(app.state.active_builder, builder)
+
+    def test_open_in_builder_twice_keeps_single_packed_view(self):
+        app = self.app
+        cond = {"type": "value_comparison", "name": "QA Val", "table": "Clienti"}
+        app._switch_tab("controls")
+        app._open_cond_in_builder(cond)
+        app._open_cond_in_builder(cond)
+        self.assertEqual(len(app.main_panel.pack_slaves()), 1)
+        self.assertIs(app.current_view, app.views["controls"])

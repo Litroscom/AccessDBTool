@@ -212,9 +212,9 @@ class App(tk.Tk):
             self._switch_tab(tab_id)
 
     def _auto_show_results(self):
-        """Mostra i risultati nel pannello del tab corrente, SENZA saltare
+        """Mostra i risultati nel pannello del tab Controlli, SENZA saltare
         di tab (Beta: il salto automatico a Dashboard disorientava il flusso)."""
-        view = getattr(self, "current_view", None)
+        view = self.views.get("controls")
         if view is not None and hasattr(view, "show_results") and self.state.current_result:
             try:
                 view.show_results(self.state.current_result)
@@ -409,13 +409,13 @@ class App(tk.Tk):
         self._wired.add(tab_id)
 
     def _open_cond_in_builder(self, cond, pending=None):
-        """Apre una condizione nel tab Controlli ricostruendo il builder.
-        Se 'pending' è presente (esclusione catturata dai risultati in
-        dashboard) la riapplica al builder appena costruito."""
+        """Apre una condizione nel tab Controlli (view persistente, senza
+        ricostruire il builder). Se 'pending' è presente (esclusione catturata
+        dai risultati in dashboard) la riapplica al builder appena caricato."""
         if not cond:
             return
         self._switch_tab("controls")
-        view = self.current_view
+        view = self.views["controls"]
         if not hasattr(view, "load_condition"):
             return
         view.load_condition(cond)
@@ -446,8 +446,9 @@ class App(tk.Tk):
     def _close_db(self):
         self.app_ctrl.stop_monitor()
         self.db_ctrl.close_db()
-        if hasattr(self, "current_view") and hasattr(self.current_view, "refresh"):
-            self.current_view.refresh()
+        view = self.views.get(self.current_view_id)
+        if view is not None and hasattr(view, "refresh"):
+            view.refresh()
         self._refresh_header_db()
 
     def _set_mon_indicator(self, state):
@@ -471,8 +472,9 @@ class App(tk.Tk):
 
     def _run_profiler_from_view(self):
         self.db_ctrl.run_profiler()
-        if hasattr(self, "current_view") and hasattr(self.current_view, "refresh"):
-            self.current_view.refresh()
+        view = self.views.get(self.current_view_id)
+        if view is not None and hasattr(view, "refresh"):
+            view.refresh()
 
     def _run_current_from_view(self):
         if hasattr(self, "current_view") and hasattr(self.current_view, "_run_current"):
