@@ -93,7 +93,10 @@ class App(tk.Tk):
 
         self.nav_buttons = {}
         self.main_panel = None
+        self.views = {}
         self.current_view = None
+        self.current_view_id = None
+        self._wired = set()
         self.mon_indicator = None
         self.mon_queue = mon_queue
         self.btn_mon_start = None
@@ -331,17 +334,55 @@ class App(tk.Tk):
         self.mon_indicator.pack(side=tk.RIGHT)
 
     def _switch_tab(self, tab_id):
-        self.current_view = self.app_ctrl.switch_tab(
-            tab_id, self.nav_buttons, self.main_panel
-        )
-        if self.current_view:
-            self._wire_view_callbacks(tab_id)
-        if hasattr(self, "lbl_page_title"):
-            self.lbl_page_title.config(text=self._PAGE_TITLES.get(tab_id, ""))
+        if self.current_view_id is not None:
+            self.views[self.current_view_id].pack_forget()
+        view = self.views.get(tab_id)
+        if view is None:
+            view = self._create_view(tab_id)
+            if view is None:
+                return
+            self.views[tab_id] = view
+            self._wire_view_once(tab_id, view)
+        view.pack(fill=tk.BOTH, expand=True)
+        self.current_view_id = tab_id
+        self.current_view = view
+        self.app_ctrl.set_active_nav(tab_id, self.nav_buttons)
+        self.lbl_page_title.config(text=self._PAGE_TITLES.get(tab_id, ""))
         self._refresh_header_db()
+        hook = getattr(view, "refresh", None)
+        if hook is not None:
+            hook()
 
-    def _wire_view_callbacks(self, tab_id):
-        view = self.current_view
+    def _create_view(self, tab_id):
+        if tab_id == "db":
+            from views.database_view import DatabaseView
+            return DatabaseView(self.main_panel, self.state, self.db_ctrl)
+        elif tab_id == "controls":
+            from views.builder_view import BuilderView
+            return BuilderView(
+                self.main_panel, self.state, self.db_ctrl,
+                library_controller=self.library_ctrl,
+                result_controller=self.result_ctrl,
+            )
+        elif tab_id == "dashboard":
+            from views.dashboard_view import DashboardView
+            return DashboardView(
+                self.main_panel, self.state, self.db_ctrl,
+                library_controller=self.library_ctrl,
+                batch_controller=self.batch_ctrl,
+                result_controller=self.result_ctrl,
+            )
+        elif tab_id == "monitor":
+            from views.monitor_view import MonitorView
+            view = MonitorView(self.main_panel, self.state, self.app_ctrl)
+            self.app_ctrl.set_monitor_row_callback(view.add_row)
+            return view
+        return None
+
+    def _wire_view_once(self, tab_id, view):
+        """Wiring coi controller, eseguito alla creazione della view (una volta sola)."""
+        if tab_id in self._wired:
+            return
         if tab_id == "controls":
             view.library_ctrl = self.library_ctrl
             view.result_ctrl = self.result_ctrl
@@ -388,6 +429,7 @@ class App(tk.Tk):
                 view.set_db_changed_callback(self._refresh_header_db)
             if hasattr(view, "set_profiler_done_callback"):
                 view.set_profiler_done_callback(lambda: None)
+        self._wired.add(tab_id)
 
     def _open_cond_in_builder(self, cond, pending=None):
         """Apre una condizione nel tab Controlli ricostruendo il builder.
