@@ -80,6 +80,10 @@ class App(tk.Tk):
 
         self.db_ctrl = DBController(self.state)
         self.library_ctrl = LibraryController(self.state, self.db_ctrl)
+        self.library_ctrl.set_view_loader(self._open_cond_in_builder)
+        self.library_ctrl.set_view_refresher(
+            lambda: self.views["controls"].refresh_lib() if "controls" in self.views else None
+        )
         self.result_ctrl = ResultController(self.state)
         self.state.result_ctrl = self.result_ctrl
         self.batch_ctrl = BatchController(self.state, self.db_ctrl, self.result_ctrl)

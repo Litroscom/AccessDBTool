@@ -103,3 +103,20 @@ class ViewLifecycleTests(unittest.TestCase):
         app._open_cond_in_builder(cond)
         self.assertEqual(len(app.main_panel.pack_slaves()), 1)
         self.assertIs(app.current_view, app.views["controls"])
+
+    def test_manager_load_reaches_live_view(self):
+        app = self.app
+        app._switch_tab("controls")  # assicura la view viva (indipendente dall'ordine dei test)
+        app._switch_tab("dashboard")
+        view = app.views["controls"]
+        received = []
+        original = view.load_condition
+        view.load_condition = lambda cond: received.append(cond)
+        cond = {"type": "value_comparison", "name": "QA Gestore", "table": "Clienti"}
+        try:
+            app.library_ctrl.load_condition_in_view(cond)
+        finally:
+            view.load_condition = original
+        self.assertEqual(len(received), 1)
+        self.assertEqual(app.state.var_saved.get(), "QA Gestore")
+        self.assertIs(app.current_view, app.views["controls"])

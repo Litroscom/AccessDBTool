@@ -11,6 +11,14 @@ class LibraryController:
     def __init__(self, state, db_controller):
         self.state = state
         self.db_ctrl = db_controller
+        self._view_loader = None
+        self._view_refresher = None
+
+    def set_view_loader(self, callback):
+        self._view_loader = callback
+
+    def set_view_refresher(self, callback):
+        self._view_refresher = callback
 
     def prepare_condition_for_storage(self, cond):
         prepared = dict(cond)
@@ -211,7 +219,18 @@ class LibraryController:
 
     def open_manager(self):
         from views.condition_manager_view import ConditionManagerDialog
-        ConditionManagerDialog(None, self.state.store, lambda: None, self.load_cond_into_builder)
+        ConditionManagerDialog(
+            None, self.state.store,
+            self._view_refresher or (lambda: None),
+            self.load_condition_in_view,
+        )
+
+    def load_condition_in_view(self, cond):
+        """Carica una condizione e la apre nella view viva (Gestore Condizioni,
+        dashboard, libreria). Sostituisce il percorso che si fermava allo stato."""
+        self.load_cond_into_builder(cond)
+        if self._view_loader is not None:
+            self._view_loader(cond)
 
     def open_groups(self):
         """Apre il gestore gruppi in una finestra dedicata.
