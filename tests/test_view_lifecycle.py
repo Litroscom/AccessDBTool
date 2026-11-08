@@ -43,4 +43,39 @@ class ViewLifecycleTests(unittest.TestCase):
         app = self.app
         for tab in ("controls", "dashboard", "monitor", "db", "controls"):
             app._switch_tab(tab)
-            self.assertEqual(len(app.main_panel.pack_slaves()), 1)
+            packed = app.main_panel.pack_slaves()
+            self.assertEqual(len(packed), 1)
+            self.assertIs(packed[0], app.views[tab])
+
+    def test_results_callbacks_do_not_grow_on_tab_switch(self):
+        app = self.app
+        app._switch_tab("controls")
+        app._switch_tab("dashboard")
+        before = len(app.result_ctrl._on_results_callbacks)
+        self.assertGreaterEqual(before, 1)
+        for i in range(10):
+            app._switch_tab("controls" if i % 2 else "dashboard")
+        self.assertEqual(len(app.result_ctrl._on_results_callbacks), before)
+
+    def test_refresh_hook_runs_once_per_show(self):
+        app = self.app
+        app._switch_tab("dashboard")
+        view = app.views["dashboard"]
+        calls = []
+        original = view.refresh
+        view.refresh = lambda: (calls.append(1), original())
+        try:
+            app._switch_tab("controls")
+            app._switch_tab("dashboard")
+        finally:
+            view.refresh = original
+        self.assertEqual(len(calls), 1)
+
+    def test_batch_log_during_tab_switch_lands_on_live_dashboard(self):
+        app = self.app
+        app._switch_tab("controls")
+        app.batch_ctrl._on_log("messaggio di prova")
+        app.update()
+        dash = app.views["dashboard"]
+        self.assertIn("messaggio di prova", dash.log_text.get("1.0", "end"))
+        self.assertEqual(len(app.main_panel.pack_slaves()), 1)

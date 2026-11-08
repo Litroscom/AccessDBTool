@@ -175,6 +175,10 @@ class DashboardView(ttk.Frame):
         ))
         self.cmb_db["values"] = ["Tutti"] + db_labels
 
+    def refresh(self):
+        """Hook pubblico chiamato dall'App quando la pagina torna visibile."""
+        self._refresh()
+
     def _on_select(self, evt):
         sel = self.dash_tree.selection()
         if not sel:

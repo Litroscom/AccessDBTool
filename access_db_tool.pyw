@@ -384,44 +384,21 @@ class App(tk.Tk):
         if tab_id in self._wired:
             return
         if tab_id == "controls":
-            view.library_ctrl = self.library_ctrl
-            view.result_ctrl = self.result_ctrl
             view.refresh_lib()
-            if hasattr(view, "refresh"):
-                view.refresh()
             # Risultati incorporati nel tab Controlli (flusso lineare)
             if hasattr(view, "results_view"):
-                view.results_view.result_ctrl = self.result_ctrl
                 view.results_view.set_open_in_builder_callback(self._open_cond_in_builder)
                 view.results_view.set_ensure_db_callback(self.db_ctrl.ensure_active_database_for_label)
             if self.result_ctrl:
                 self.result_ctrl.set_results_callback(
                     lambda res, v=view: v.after(0, v.show_results, res))
         elif tab_id == "dashboard":
-            view.library_ctrl = self.library_ctrl
-            view.batch_ctrl = self.batch_ctrl
-            view.result_ctrl = self.result_ctrl
-            if self.batch_ctrl:
-                # Le callback arrivano da thread worker del batch: marshalling
-                # sul main thread via after(), altrimenti Tkinter cross-thread
-                # solleva eccezioni e interrompe l'aggiornamento.
-                self.batch_ctrl.set_log_callback(
-                    lambda line, v=view: v.after(0, v._append_log, line))
-                self.batch_ctrl.set_progress_callback(
-                    lambda cur, tot, v=view: v.after(0, v._update_progress, cur, tot))
-                self.batch_ctrl.set_dash_update_callback(
-                    lambda v=view: v.after(0, v._refresh))
-            if self.result_ctrl:
-                self.result_ctrl.set_results_callback(
-                    lambda res, v=view: v.after(0, v.show_results, res))
             if hasattr(view, "results_view"):
-                view.results_view.result_ctrl = self.result_ctrl
                 view.results_view.set_open_in_builder_callback(self._open_cond_in_builder)
                 view.results_view.set_ensure_db_callback(self.db_ctrl.ensure_active_database_for_label)
             # Doppio click su riga dashboard -> apri nel builder (tab Controlli)
             if hasattr(view, "set_open_in_builder_callback"):
                 view.set_open_in_builder_callback(self._open_cond_in_builder)
-            view._refresh()
         elif tab_id == "db":
             if hasattr(view, "set_load_insight_callback"):
                 view.set_load_insight_callback(self._load_insight)
