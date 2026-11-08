@@ -149,3 +149,53 @@ diverso: `load_condition` apre il tab corretto via callback dell'`App`.
 - Come estendere `set_db_changed_callback` alle view vive (lista di listener
   o `refresh()` on-show sufficiente).
 - Partizionamento dei test nuovi.
+
+---
+
+## Esito misurato (aggiunto a fine lavoro, 2026-11-08)
+
+### Cosa ha consegnato il branch
+
+Sei task, 147 test verdi (115 + 16 + 11 nuovi + 5 dalla correzione finale),
+app avviabile, smoke su **copia** di `Datico.MDB` (33 tabelle scoperte, nessun
+dato letto).
+
+### Prestazioni: A/B reale, non stima
+
+Stesso script, stessa macchina, finestra nascosta, 5 giri dopo riscaldamento,
+mediane. Baseline = commit `cb26ea9` in worktree separato.
+
+| Tab | switch prima | switch dopo | repaint prima | repaint dopo |
+|---|---|---|---|---|
+| Controlli | 201.0 ms | **3.3 ms** | 187.4 ms | 72.6 ms |
+| Dashboard | 297.8 ms | **3.3 ms** | 104.5 ms | 68.2 ms |
+| Monitor | 179.6 ms | **3.2 ms** | 43.6 ms | 41.4 ms |
+| Database | 80.6 ms | **4.0 ms** | 37.5 ms | 35.8 ms |
+
+`switch` = `_switch_tab` (la parte che il codice controlla). `repaint` =
+`app.update()`, rendering di Tk.
+
+**Onestà sui numeri:** il guadagno sulla parte che il codice controlla è di
+15-25x e il criterio dei 50 ms è rispettato con margine (3-4 ms). Su **finestra
+visibile** il repaint che segue al cambio è però *cresciuto* (da 242-610 ms a
+324-932 ms): il totale percepito su questa macchina non è quindi chiaramente
+migliore, e in alcune misure peggiore. `refresh()` on-show non è la causa
+(misurato: 1196 vs 1110 ms con `refresh()` neutralizzato) — è il map/paint del
+sottoalbero Tk che `pack_forget` + `pack` rimappa.
+
+**Conseguenza:** la ricostruzione delle view è sparita e lo stato sopravvive
+alle pagine (gli obiettivi di questo blocco), ma il costo residuo di Tk va
+affrontato con una tecnica diversa — view impilate nella stessa cella `grid`
+con `tkraise()` invece di unmap/remap — che è un esperimento a sé, non una
+estensione di questo branch.
+
+### Debito noto lasciato aperto
+
+- Messaggio di stato: aprire un DB scrive "Monitor fermato: database cambiato"
+  anche quando non c'è stato alcun cambio (sovrascrive "DB aperto: …").
+- Un cambio DB reale notifica due volte (prima e dopo la connessione) → refresh
+  doppio, idempotente ma evitabile.
+- `state.status.set(...)` e `filedialog` possono essere toccati da thread worker
+  (`db_controller.py:48`, `batch_controller.py:196`) — preesistenti, fuori scope.
+- `ensure_active_builder_from_result` è codice morto senza chiamanti.
+- `_run_profiler_from_view` aggiorna solo la view attiva, non tutte.
