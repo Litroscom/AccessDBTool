@@ -155,7 +155,7 @@ def _wire_view_once(self, tab_id, view):
     e in coda `self._wired.add(tab_id)`."""
 ```
 
-La factory `_create_view` (corpo = il ramo di costruzione dell'attuale `switch_tab` di `AppController`, che viene rimosso) istanzia le view **con tutti i controller come argomenti di costruttore** (le firme esistono già): `DatabaseView(main_panel, state, db_ctrl)`, `BuilderView(main_panel, state, db_ctrl, library_controller=self.library_ctrl, result_controller=self.result_ctrl)`, `DashboardView(main_panel, state, db_ctrl, library_controller=self.library_ctrl, batch_controller=self.batch_ctrl, result_controller=self.result_ctrl)`, `MonitorView(main_panel, state, self)`. `state.active_builder = None` **non** viene più azzerato qui.
+La factory `_create_view` (corpo = il ramo di costruzione dell'attuale `switch_tab` di `AppController`, che viene rimosso) istanzia le view **con tutti i controller come argomenti di costruttore** (le firme esistono già): `DatabaseView(main_panel, state, db_ctrl)`, `BuilderView(main_panel, state, db_ctrl, library_controller=self.library_ctrl, result_controller=self.result_ctrl)`, `DashboardView(main_panel, state, db_ctrl, library_controller=self.library_ctrl, batch_controller=self.batch_ctrl, result_controller=self.result_ctrl)`, `MonitorView(main_panel, state, self.app_ctrl)` e subito `self.app_ctrl.set_monitor_row_callback(view.add_row)`. `state.active_builder = None` **non** viene più azzerato qui.
 
 - [ ] **Step 4: Run test to verify it passes**
 
