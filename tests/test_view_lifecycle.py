@@ -197,6 +197,41 @@ class ViewLifecycleTests(unittest.TestCase):
             state.status.set(original_status)
             app.db_ctrl.set_active_db_switched_callback(app._on_active_db_switched)
 
+    def test_database_tab_close_button_uses_app_close_action(self):
+        app = self.app
+        was_wired = "db" in app._wired
+        original_close = app._close_db
+        original_db_close = app.db_ctrl.close_db
+        close_calls = []
+        view = app._create_view("db")
+
+        def find_close_button(widget):
+            for child in widget.winfo_children():
+                if child.winfo_class() == "TButton" and child.cget("text") == "Chiudi":
+                    return child
+                found = find_close_button(child)
+                if found is not None:
+                    return found
+            return None
+
+        try:
+            app._close_db = lambda: close_calls.append("app")
+            app.db_ctrl.close_db = lambda: close_calls.append("controller")
+            app._wired.discard("db")
+            app._wire_view_once("db", view)
+            button = find_close_button(view)
+            self.assertIsNotNone(button)
+            button.invoke()
+            self.assertEqual(close_calls, ["app"])
+        finally:
+            view.destroy()
+            app._close_db = original_close
+            app.db_ctrl.close_db = original_db_close
+            if was_wired:
+                app._wired.add("db")
+            else:
+                app._wired.discard("db")
+
     def test_builder_refresh_rebuilds_db_bound_choices_and_clears_selection(self):
         from views.builder_view import BuilderView
 

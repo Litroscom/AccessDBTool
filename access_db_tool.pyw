@@ -406,6 +406,8 @@ class App(tk.Tk):
         elif tab_id == "db":
             if hasattr(view, "set_load_insight_callback"):
                 view.set_load_insight_callback(self._load_insight)
+            if hasattr(view, "set_close_db_callback"):
+                view.set_close_db_callback(self._close_db)
             if hasattr(view, "set_db_changed_callback"):
                 view.set_db_changed_callback(self._refresh_header_db)
             if hasattr(view, "set_profiler_done_callback"):
