@@ -48,6 +48,11 @@ class DBController:
         self.state.current_db_label = label
         self.state.status.set(f"DB aperto: {label or os.path.basename(path)}")
         logger.info(f"Database aperto: {path} [{label}]")
+        if self._on_active_db_switched:
+            try:
+                self._on_active_db_switched()
+            except Exception:
+                pass
         return label
 
     def resolve_database_path(self, database_label="", interactive=False):

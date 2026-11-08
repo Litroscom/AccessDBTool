@@ -150,3 +150,111 @@ class ViewLifecycleTests(unittest.TestCase):
                 app.views[name].refresh = fn
         self.assertEqual(len(app.main_panel.pack_slaves()), 1)
         self.assertIn("controls", called)
+
+    def test_database_controller_notifies_after_connection_is_established(self):
+        app = self.app
+        state = app.state
+        original_db = state.db
+        original_label = state.current_db_label
+        original_registry = state.db_registry
+        original_status = state.status.get()
+        notifications = []
+
+        class FakeDatabase:
+            connected = False
+            db_path = ""
+            tables = []
+
+            def connect(self, path):
+                self.db_path = path
+                self.connected = True
+                self.tables = ["Nuova"]
+
+            def disconnect(self):
+                self.connected = False
+                self.db_path = ""
+                self.tables = []
+
+        class FakeRegistry:
+            def set_path(self, label, path):
+                return label
+
+            def remember(self, label):
+                return label
+
+        state.db = FakeDatabase()
+        state.db_registry = FakeRegistry()
+        app.db_ctrl.set_active_db_switched_callback(
+            lambda: notifications.append(state.db.connected)
+        )
+        try:
+            app.db_ctrl.connect_active_database("fake.accdb", "Finto")
+            self.assertEqual(notifications, [True])
+        finally:
+            state.db = original_db
+            state.current_db_label = original_label
+            state.db_registry = original_registry
+            state.status.set(original_status)
+            app.db_ctrl.set_active_db_switched_callback(app._on_active_db_switched)
+
+    def test_builder_refresh_rebuilds_db_bound_choices_and_clears_selection(self):
+        from views.builder_view import BuilderView
+
+        app = self.app
+        state = app.state
+        original = {
+            "db": state.db,
+            "active_builder": state.active_builder,
+            "active_ctype": state.active_ctype,
+            "sel_tables": state.sel_tables,
+            "current_db_label": state.current_db_label,
+            "var_saved": state.var_saved.get(),
+            "var_ctype": state.var_ctype.get(),
+            "loaded_condition_idx": state.loaded_condition_idx,
+        }
+
+        class FakeDatabase:
+            connected = True
+            db_path = "fake.accdb"
+
+            def __init__(self, tables, columns):
+                self.tables = tables
+                self._columns = columns
+
+            def columns(self, table):
+                return self._columns.get(table, [])
+
+        view = None
+        try:
+            state.db = FakeDatabase(["Prima"], {"Prima": ["VecchiaColonna"]})
+            state.active_builder = None
+            state.active_ctype = "similarity_check"
+            state.sel_tables = []
+            state.current_db_label = "Primo DB"
+            view = BuilderView(app.main_panel, state, app.db_ctrl)
+            view.load_condition({
+                "type": "similarity_check", "name": "QA DB", "table": "Prima",
+                "column": "VecchiaColonna", "key_column": "ID",
+            })
+            self.assertEqual(tuple(state.active_builder.cmb_table["values"]), ("Prima",))
+            self.assertEqual(view.col_selector.get_selected(), [])
+
+            state.db = FakeDatabase(["Seconda"], {"Seconda": ["NuovaColonna"]})
+            state.current_db_label = "Secondo DB"
+            view.refresh()
+
+            self.assertEqual(tuple(state.active_builder.cmb_table["values"]), ("Seconda",))
+            self.assertEqual(state.active_builder.var_table.get(), "")
+            self.assertEqual(state.sel_tables, [])
+            self.assertEqual(view.col_selector.col_vars, {})
+        finally:
+            if view is not None:
+                view.destroy()
+            state.db = original["db"]
+            state.active_builder = original["active_builder"]
+            state.active_ctype = original["active_ctype"]
+            state.sel_tables = original["sel_tables"]
+            state.current_db_label = original["current_db_label"]
+            state.var_saved.set(original["var_saved"])
+            state.var_ctype.set(original["var_ctype"])
+            state.loaded_condition_idx = original["loaded_condition_idx"]
