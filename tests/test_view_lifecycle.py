@@ -139,7 +139,14 @@ class ViewLifecycleTests(unittest.TestCase):
     def test_close_db_with_live_views_does_not_raise(self):
         app = self.app
         app._switch_tab("controls")
-        app.app_ctrl.stop_monitor()
-        app.db_ctrl.close_db()
-        app._refresh_live_views()
+        called, originals = [], {}
+        for name, view in app.views.items():
+            originals[name] = view.refresh
+            view.refresh = (lambda n=name: called.append(n))
+        try:
+            app._close_db()
+        finally:
+            for name, fn in originals.items():
+                app.views[name].refresh = fn
         self.assertEqual(len(app.main_panel.pack_slaves()), 1)
+        self.assertIn("controls", called)

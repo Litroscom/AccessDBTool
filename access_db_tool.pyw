@@ -463,7 +463,8 @@ class App(tk.Tk):
 
     def _on_active_db_switched(self):
         """Il database attivo è cambiato: il monitor girava sul file precedente,
-        le sue condizioni non valgono più -> fermalo e aggiorna l'indicatore."""
+        le sue condizioni non valgono più -> fermalo, aggiorna l'indicatore e
+        rinfresca tutte le view già costruite."""
         self.app_ctrl.stop_monitor()
         self._set_mon_indicator("stopped")
         self.state.status.set("Monitor fermato: database cambiato.")
