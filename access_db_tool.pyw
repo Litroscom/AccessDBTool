@@ -231,21 +231,22 @@ class App(tk.Tk):
         prima di salvare, per non perdere le modifiche in Filtri/Esclusioni.
         Passa anche la selezione colonne report (fix: prima il salvataggio dal
         menu azzerava le display_columns salvate)."""
-        if self.current_view and hasattr(self.current_view, "_sync_builder_from_sections"):
-            self.current_view._sync_builder_from_sections()
+        controls_view = self.views.get("controls")
+        if controls_view and hasattr(controls_view, "_sync_builder_from_sections"):
+            controls_view._sync_builder_from_sections()
         display_cols = self._view_display_cols()
         self.library_ctrl.save_cond(False, display_cols=display_cols)
 
     def _menu_save_cond_new(self):
-        if self.current_view and hasattr(self.current_view, "_sync_builder_from_sections"):
-            self.current_view._sync_builder_from_sections()
+        controls_view = self.views.get("controls")
+        if controls_view and hasattr(controls_view, "_sync_builder_from_sections"):
+            controls_view._sync_builder_from_sections()
         display_cols = self._view_display_cols()
         self.library_ctrl.save_cond(True, display_cols=display_cols)
 
     def _view_display_cols(self):
-        """Selezione colonne report del selettore attivo, o None se il
-        selettore non è stato inizializzato (nessuna tabella caricata)."""
-        view = getattr(self, "current_view", None)
+        """Selezione colonne report della view Controlli, o None se non inizializzata."""
+        view = self.views.get("controls")
         sel = getattr(view, "col_selector", None)
         if sel is not None and getattr(sel, "col_vars", None):
             return sel.get_selected()

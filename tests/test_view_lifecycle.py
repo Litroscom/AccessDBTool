@@ -197,6 +197,62 @@ class ViewLifecycleTests(unittest.TestCase):
             state.status.set(original_status)
             app.db_ctrl.set_active_db_switched_callback(app._on_active_db_switched)
 
+    def test_menu_saves_sync_controls_settings_off_active_tab(self):
+        from types import SimpleNamespace
+
+        app = self.app
+        original_current_view = app.current_view
+        had_controls = "controls" in app.views
+        original_controls = app.views.get("controls")
+        original_builder = app.state.active_builder
+        original_save_cond = app.library_ctrl.save_cond
+        calls = []
+
+        class ControlsView:
+            def __init__(self):
+                self.col_selector = SimpleNamespace(
+                    col_vars={"ControlsColumn": object()},
+                    get_selected=lambda: ["ControlsColumn"],
+                )
+                self.sync_count = 0
+
+            def _sync_builder_from_sections(self):
+                self.sync_count += 1
+                app.state.active_builder.periodic_review_enabled = True
+
+        class DashboardView:
+            col_selector = SimpleNamespace(
+                col_vars={"DashboardColumn": object()},
+                get_selected=lambda: ["DashboardColumn"],
+            )
+
+            def _sync_builder_from_sections(self):
+                raise AssertionError("La view Dashboard non deve sincronizzare le impostazioni del builder")
+
+        controls = ControlsView()
+        app.views["controls"] = controls
+        app.current_view = DashboardView()
+        app.state.active_builder = SimpleNamespace(periodic_review_enabled=False)
+        app.library_ctrl.save_cond = lambda is_new, **kwargs: calls.append(
+            (is_new, kwargs.get("display_cols"), app.state.active_builder.periodic_review_enabled)
+        )
+        try:
+            app._menu_save_cond()
+            app._menu_save_cond_new()
+            self.assertEqual(controls.sync_count, 2)
+            self.assertEqual(
+                calls,
+                [(False, ["ControlsColumn"], True), (True, ["ControlsColumn"], True)],
+            )
+        finally:
+            app.current_view = original_current_view
+            if had_controls:
+                app.views["controls"] = original_controls
+            else:
+                app.views.pop("controls", None)
+            app.state.active_builder = original_builder
+            app.library_ctrl.save_cond = original_save_cond
+
     def test_database_switch_from_worker_marshals_all_ui_work_to_main_thread(self):
         import threading
 
