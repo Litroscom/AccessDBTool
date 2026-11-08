@@ -62,12 +62,9 @@ import unittest
 sys.modules.setdefault("pyodbc", types.SimpleNamespace(drivers=lambda: []))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import tkinter as tk
-import ttkbootstrap as _ttkbstrap
-
-_ROOT = tk.Tk()
-_ROOT.withdraw()
-_ttkbstrap.Style(theme="litera")
+# Nessuna root e nessuna Style create a livello di modulo: la root è l'App.
+# ttkbootstrap tollera una sola Style per processo e `tests/smoke_qa.py` la
+# crea già quando la suite gira insieme; una seconda la resetterebbe.
 
 
 class ViewLifecycleTests(unittest.TestCase):
@@ -302,7 +299,10 @@ git commit -m "refactor(v8): wiring view una volta sola + hook refresh pubblici"
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python -m unittest tests.test_view_lifecycle -v`
-Expected: FAIL — `assertIs` sul builder fallisce (viene azzerato dallo switch)
+Expected: FAIL — `assertIs` sul builder fallisce (viene azzerato dallo switch).
+Se il test passa già, significa che `_switch_tab` di Task 1 non azzera più
+`state.active_builder`: è il comportamento voluto — annotarlo nel report e
+procedere (il test resta come guardia di regressione).
 
 - [ ] **Step 3: Implementare**
 
