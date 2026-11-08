@@ -82,6 +82,7 @@ class BuilderRoundTripTests(unittest.TestCase):
         ("row_cross_column_check", RowCrossColumnBuilder),
         ("lookup_validation", LookupValidationBuilder),
         ("aggregate_threshold_check", AggregateThresholdBuilder),
+        ("aggregate_multi_table_threshold", AggregateMultiTableBuilder),
     ]
 
     def _config_seed(self, ctype):
@@ -114,8 +115,61 @@ class BuilderRoundTripTests(unittest.TestCase):
             "row_cross_column_check": {"table": "Clienti"},
             "lookup_validation": {"table": "Clienti"},
             "aggregate_threshold_check": {"table": "Ordini"},
+            "aggregate_multi_table_threshold": {
+                "sources": [{"table": "Ordini", "group_col": "ClienteID", "value_col": "Importo"}],
+                "agg_function": "SUM", "operator": ">", "threshold": 10,
+            },
         }
         return dict(base.get(ctype, {"table": "Clienti"}))
+
+    def test_round_trip_of_own_output_preserves_every_field(self):
+        """get_config -> set_config -> get_config deve restituire lo stesso
+        dizionario, campo per campo.
+
+        Il test precedente verificava solo tabella ed esclusioni: un set_config
+        che perdeva un campo (soglie, colonne, pattern, destinazioni) passava
+        comunque. Qui il seed e' l'output del builder stesso, quindi non c'e'
+        nessuno schema da indovinare e nessun valore inventato da rifiutare.
+        """
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            db = FakeDB()
+            for ctype, cls in self.BUILDERS:
+                with self.subTest(builder=ctype):
+                    parent = ttk.Frame(root)
+                    b = cls(parent, db, on_table_change=None)
+                    b.pack()
+                    # Valori NON di default: se restassero i default, un
+                    # set_config che ignora un campo non si distinguerebbe da
+                    # uno che lo ripristina (caso reale: min_prefix fisso a 3).
+                    seed = self._nudge(b.get_config())
+                    b.set_config(dict(seed))
+                    got = b.get_config()
+                    self.assertEqual(got, seed,
+                                     f"{ctype}: la configurazione cambia dopo "
+                                     f"set_config(get_config())")
+        finally:
+            root.destroy()
+
+    @classmethod
+    def _nudge(cls, value):
+        """Sposta i valori di un passo, restando in intervalli plausibili.
+
+        Numeri +1 (le scale/spinbox accettano il passo), booleani invertiti,
+        stringhe invariate (cambiarle romperebbe operatori e nomi colonna).
+        """
+        if isinstance(value, bool):
+            return not value
+        if isinstance(value, int):
+            return value + 1
+        if isinstance(value, float):
+            return value + 1
+        if isinstance(value, list):
+            return [cls._nudge(v) for v in value]
+        if isinstance(value, dict):
+            return {k: cls._nudge(v) for k, v in value.items()}
+        return value
 
     def test_round_trip_all_builders(self):
         root = tk.Tk()
@@ -133,9 +187,16 @@ class BuilderRoundTripTests(unittest.TestCase):
                     except Exception as e:
                         self.fail(f"{ctype}: set_config fallito: {e}")
                     cfg = b.get_config()
-                    got_table = cfg.get("table") or cfg.get("source_table")
-                    self.assertEqual(got_table, seed.get("table") or seed.get("source_table"),
-                                     f"{ctype}: tabella non preservata")
+                    expected_table = seed.get("table") or seed.get("source_table")
+                    if expected_table:
+                        got_table = cfg.get("table") or cfg.get("source_table")
+                        self.assertEqual(got_table, expected_table,
+                                         f"{ctype}: tabella non preservata")
+                    else:
+                        # Tipi che non hanno una singola tabella: per
+                        # aggregate_multi_table la sorgente sono le `sources`.
+                        self.assertEqual(cfg.get("sources"), seed.get("sources"),
+                                         f"{ctype}: sorgenti non preservate")
                     # Se il seed aveva exclude_conditions, il builder deve
                     # preservarle (inline) dopo il round-trip.
                     if seed.get("exclude_conditions"):
