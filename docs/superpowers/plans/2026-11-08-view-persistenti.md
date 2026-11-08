@@ -212,6 +212,7 @@ git commit -m "refactor(v8): view persistenti, cambio tab senza ricostruzione"
 
     def test_batch_log_during_tab_switch_lands_on_live_dashboard(self):
         app = self.app
+        app._switch_tab("dashboard")   # crea la view e registra le callback di log
         app._switch_tab("controls")
         app.batch_ctrl._on_log("messaggio di prova")
         app.update()
