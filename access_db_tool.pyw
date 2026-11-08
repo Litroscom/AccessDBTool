@@ -479,9 +479,14 @@ class App(tk.Tk):
         self._handle_active_db_switched()
 
     def _handle_active_db_switched(self):
-        self.app_ctrl.stop_monitor()
+        """Il database attivo e' cambiato: ferma il monitor se girava, aggiorna
+        l'indicatore e tutte le view vive. Se il monitor non girava, la barra
+        di stato resta quella del database appena aperto."""
+        monitor_attivo = bool(getattr(getattr(self.state, "monitor", None), "is_running", False))
+        if monitor_attivo:
+            self.app_ctrl.stop_monitor()
+            self.state.status.set("Monitor fermato: database cambiato.")
         self._set_mon_indicator("stopped")
-        self.state.status.set("Monitor fermato: database cambiato.")
         self._refresh_live_views()
 
     def _refresh_live_views(self):

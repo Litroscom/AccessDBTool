@@ -153,6 +153,63 @@ class ViewLifecycleTests(unittest.TestCase):
         self.assertIs(app.main_panel.winfo_children()[-1], app.views["controls"])
         self.assertIn("controls", called)
 
+    def _fai_aprire_db(self, monitor_running):
+        """Apre un DB finto con il monitor nello stato indicato e restituisce
+        lo stato della barra. Non tocca file reali."""
+        app = self.app
+        state = app.state
+        original = (state.db, state.current_db_label, state.db_registry,
+                    state.monitor, state.status.get())
+
+        class FakeDatabase:
+            connected = False
+            db_path = ""
+            tables = []
+
+            def connect(self, path):
+                self.db_path = path
+                self.connected = True
+
+            def disconnect(self):
+                self.connected = False
+                self.db_path = ""
+
+        class FakeRegistry:
+            def set_path(self, label, path):
+                return label
+
+            def remember(self, label):
+                return label
+
+        class FakeMonitor:
+            is_running = monitor_running
+
+            def stop(self):
+                FakeMonitor.is_running = False
+
+        FakeMonitor.is_running = monitor_running
+        state.db = FakeDatabase()
+        state.db_registry = FakeRegistry()
+        state.monitor = FakeMonitor()
+        try:
+            app.db_ctrl.set_active_db_switched_callback(app._on_active_db_switched)
+            app.db_ctrl.connect_active_database("fake.accdb", "Finto")
+            return state.status.get()
+        finally:
+            (state.db, state.current_db_label, state.db_registry,
+             state.monitor, _) = original
+            state.status.set(original[4])
+
+    def test_opening_db_without_monitor_keeps_the_database_status(self):
+        stato = self._fai_aprire_db(monitor_running=False)
+        self.assertIn("DB aperto", stato,
+                      "aprire un DB non deve annunciare la fermata di un monitor che non girava")
+        self.assertNotIn("Monitor fermato", stato)
+
+    def test_switching_db_with_running_monitor_says_monitor_stopped(self):
+        stato = self._fai_aprire_db(monitor_running=True)
+        self.assertIn("Monitor fermato", stato)
+
     def test_database_controller_notifies_after_connection_is_established(self):
         app = self.app
         state = app.state
