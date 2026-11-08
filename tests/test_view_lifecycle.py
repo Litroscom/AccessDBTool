@@ -197,6 +197,46 @@ class ViewLifecycleTests(unittest.TestCase):
             state.status.set(original_status)
             app.db_ctrl.set_active_db_switched_callback(app._on_active_db_switched)
 
+    def test_database_switch_from_worker_marshals_all_ui_work_to_main_thread(self):
+        import threading
+
+        app = self.app
+        main_thread_id = threading.get_ident()
+        scheduled = []
+        operations = []
+        originals = {
+            "after": app.after,
+            "stop_monitor": app.app_ctrl.stop_monitor,
+            "indicator": app._set_mon_indicator,
+            "status_set": app.state.status.set,
+            "refresh": app._refresh_live_views,
+        }
+        app.after = lambda delay, callback, *args: scheduled.append((callback, args))
+        app.app_ctrl.stop_monitor = lambda: operations.append(("stop", threading.get_ident()))
+        app._set_mon_indicator = lambda state: operations.append(("indicator", threading.get_ident()))
+        app.state.status.set = lambda value: operations.append(("status", threading.get_ident()))
+        app._refresh_live_views = lambda: operations.append(("refresh", threading.get_ident()))
+        try:
+            worker = threading.Thread(target=app._on_active_db_switched)
+            worker.start()
+            worker.join(timeout=5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(len(scheduled), 1)
+            self.assertEqual(operations, [])
+
+            callback, args = scheduled[0]
+            callback(*args)
+            self.assertEqual(
+                {thread_id for _name, thread_id in operations},
+                {main_thread_id},
+            )
+        finally:
+            app.after = originals["after"]
+            app.app_ctrl.stop_monitor = originals["stop_monitor"]
+            app._set_mon_indicator = originals["indicator"]
+            app.state.status.set = originals["status_set"]
+            app._refresh_live_views = originals["refresh"]
+
     def test_database_tab_close_button_uses_app_close_action(self):
         app = self.app
         was_wired = "db" in app._wired

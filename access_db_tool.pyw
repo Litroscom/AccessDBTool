@@ -54,6 +54,7 @@ logger = setup_logging(constants._BASE_DIR)
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+        self._tk_thread_id = threading.get_ident()
         logger.info(f"Avvio Access DB Quality Control Tool v{constants.APP_VERSION}...")
 
         db = DatabaseManager()
@@ -464,9 +465,16 @@ class App(tk.Tk):
             self.mon_indicator.config(text=" MONITOR OFF ", bootstyle="inverse-danger")
 
     def _on_active_db_switched(self):
-        """Il database attivo è cambiato: il monitor girava sul file precedente,
-        le sue condizioni non valgono più -> fermalo, aggiorna l'indicatore e
-        rinfresca tutte le view già costruite."""
+        """Ferma il monitor e rinfresca le view sul thread Tk principale."""
+        if threading.get_ident() != self._tk_thread_id:
+            try:
+                self.after(0, self._handle_active_db_switched)
+            except Exception:
+                logger.exception("Impossibile pianificare il refresh dopo il cambio DB")
+            return
+        self._handle_active_db_switched()
+
+    def _handle_active_db_switched(self):
         self.app_ctrl.stop_monitor()
         self._set_mon_indicator("stopped")
         self.state.status.set("Monitor fermato: database cambiato.")
