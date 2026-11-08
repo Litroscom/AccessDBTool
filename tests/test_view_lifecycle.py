@@ -120,3 +120,26 @@ class ViewLifecycleTests(unittest.TestCase):
         self.assertEqual(len(received), 1)
         self.assertEqual(app.state.var_saved.get(), "QA Gestore")
         self.assertIs(app.current_view, app.views["controls"])
+
+    def test_active_db_switch_refreshes_every_live_view(self):
+        app = self.app
+        for tab in ("db", "controls", "dashboard", "monitor"):
+            app._switch_tab(tab)
+        called, originals = [], {}
+        for name, view in app.views.items():
+            originals[name] = view.refresh
+            view.refresh = (lambda n=name: called.append(n))
+        try:
+            app._on_active_db_switched()
+        finally:
+            for name, fn in originals.items():
+                app.views[name].refresh = fn
+        self.assertEqual(set(called), {"db", "controls", "dashboard", "monitor"})
+
+    def test_close_db_with_live_views_does_not_raise(self):
+        app = self.app
+        app._switch_tab("controls")
+        app.app_ctrl.stop_monitor()
+        app.db_ctrl.close_db()
+        app._refresh_live_views()
+        self.assertEqual(len(app.main_panel.pack_slaves()), 1)

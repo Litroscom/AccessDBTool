@@ -450,9 +450,7 @@ class App(tk.Tk):
     def _close_db(self):
         self.app_ctrl.stop_monitor()
         self.db_ctrl.close_db()
-        view = self.views.get(self.current_view_id)
-        if view is not None and hasattr(view, "refresh"):
-            view.refresh()
+        self._refresh_live_views()
         self._refresh_header_db()
 
     def _set_mon_indicator(self, state):
@@ -469,6 +467,18 @@ class App(tk.Tk):
         self.app_ctrl.stop_monitor()
         self._set_mon_indicator("stopped")
         self.state.status.set("Monitor fermato: database cambiato.")
+        self._refresh_live_views()
+
+    def _refresh_live_views(self):
+        """Notifica le view già costruite che lo stato del DB è cambiato."""
+        for view in list(self.views.values()):
+            hook = getattr(view, "refresh", None)
+            if hook is None:
+                continue
+            try:
+                hook()
+            except Exception:
+                logger.exception("Refresh della view fallito dopo cambio DB")
 
     def _start_monitor(self):
         if self.app_ctrl.start_monitor():
