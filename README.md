@@ -3,8 +3,8 @@
 Strumento desktop (Tkinter) per il controllo qualità di database Microsoft Access tramite ODBC.
 Permette di definire condizioni di validazione, eseguirle in batch su più database, monitorare i risultati e gestire una libreria di controlli riutilizzabili.
 
-- **Versione:** 7.4 (vedi `constants.APP_VERSION`)
-- **Build date:** 2026-06-17
+- **Versione:** 8.1-beta (vedi `constants.APP_VERSION`)
+- **Build date:** 2026-11-09
 - **Requisito runtime:** driver ODBC Microsoft Access installato sul PC target.
 
 ## Avvio
