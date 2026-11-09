@@ -39,13 +39,14 @@ class ViewLifecycleTests(unittest.TestCase):
             app._switch_tab(tab)
         self.assertEqual(set(app.views), {"db", "controls", "dashboard", "monitor"})
 
-    def test_only_one_view_packed(self):
+    def test_only_current_view_is_on_top(self):
         app = self.app
         for tab in ("controls", "dashboard", "monitor", "db", "controls"):
             app._switch_tab(tab)
-            packed = app.main_panel.pack_slaves()
-            self.assertEqual(len(packed), 1)
-            self.assertIs(packed[0], app.views[tab])
+            # Le view sono impilate nella stessa cella: quella in cima
+            # (ultimo figlio nell'ordine di stacking) e' il tab attivo.
+            self.assertIs(app.main_panel.winfo_children()[-1], app.views[tab])
+            self.assertEqual(len(app.main_panel.grid_slaves()), len(app.views))
 
     def test_results_callbacks_do_not_grow_on_tab_switch(self):
         app = self.app
@@ -79,7 +80,7 @@ class ViewLifecycleTests(unittest.TestCase):
         app.update()
         dash = app.views["dashboard"]
         self.assertIn("messaggio di prova", dash.log_text.get("1.0", "end"))
-        self.assertEqual(len(app.main_panel.pack_slaves()), 1)
+        self.assertIs(app.main_panel.winfo_children()[-1], app.views["controls"])
 
     def test_active_builder_survives_tab_switch(self):
         app = self.app
@@ -95,13 +96,14 @@ class ViewLifecycleTests(unittest.TestCase):
         app._switch_tab("controls")
         self.assertIs(app.state.active_builder, builder)
 
-    def test_open_in_builder_twice_keeps_single_packed_view(self):
+    def test_open_in_builder_twice_does_not_duplicate_the_view(self):
         app = self.app
         cond = {"type": "value_comparison", "name": "QA Val", "table": "Clienti"}
         app._switch_tab("controls")
         app._open_cond_in_builder(cond)
         app._open_cond_in_builder(cond)
-        self.assertEqual(len(app.main_panel.pack_slaves()), 1)
+        self.assertIs(app.main_panel.winfo_children()[-1], app.views["controls"])
+        self.assertEqual(len(app.main_panel.winfo_children()), len(app.views))
         self.assertIs(app.current_view, app.views["controls"])
 
     def test_manager_load_reaches_live_view(self):
@@ -148,8 +150,65 @@ class ViewLifecycleTests(unittest.TestCase):
         finally:
             for name, fn in originals.items():
                 app.views[name].refresh = fn
-        self.assertEqual(len(app.main_panel.pack_slaves()), 1)
+        self.assertIs(app.main_panel.winfo_children()[-1], app.views["controls"])
         self.assertIn("controls", called)
+
+    def _fai_aprire_db(self, monitor_running):
+        """Apre un DB finto con il monitor nello stato indicato e restituisce
+        lo stato della barra. Non tocca file reali."""
+        app = self.app
+        state = app.state
+        original = (state.db, state.current_db_label, state.db_registry,
+                    state.monitor, state.status.get())
+
+        class FakeDatabase:
+            connected = False
+            db_path = ""
+            tables = []
+
+            def connect(self, path):
+                self.db_path = path
+                self.connected = True
+
+            def disconnect(self):
+                self.connected = False
+                self.db_path = ""
+
+        class FakeRegistry:
+            def set_path(self, label, path):
+                return label
+
+            def remember(self, label):
+                return label
+
+        class FakeMonitor:
+            is_running = monitor_running
+
+            def stop(self):
+                FakeMonitor.is_running = False
+
+        FakeMonitor.is_running = monitor_running
+        state.db = FakeDatabase()
+        state.db_registry = FakeRegistry()
+        state.monitor = FakeMonitor()
+        try:
+            app.db_ctrl.set_active_db_switched_callback(app._on_active_db_switched)
+            app.db_ctrl.connect_active_database("fake.accdb", "Finto")
+            return state.status.get()
+        finally:
+            (state.db, state.current_db_label, state.db_registry,
+             state.monitor, _) = original
+            state.status.set(original[4])
+
+    def test_opening_db_without_monitor_keeps_the_database_status(self):
+        stato = self._fai_aprire_db(monitor_running=False)
+        self.assertIn("DB aperto", stato,
+                      "aprire un DB non deve annunciare la fermata di un monitor che non girava")
+        self.assertNotIn("Monitor fermato", stato)
+
+    def test_switching_db_with_running_monitor_says_monitor_stopped(self):
+        stato = self._fai_aprire_db(monitor_running=True)
+        self.assertIn("Monitor fermato", stato)
 
     def test_database_controller_notifies_after_connection_is_established(self):
         app = self.app

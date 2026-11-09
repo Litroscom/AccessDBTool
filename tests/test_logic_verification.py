@@ -1334,6 +1334,58 @@ class BugFixRegressionTests(unittest.TestCase):
                                    {"table": "Diffusori"}, ["ID", "Nome"], {})
             self.assertEqual(cond["display_columns"], ["ID", "Nome"])
 
+    # --- Bug 10: "Aggiorna salvata" con indice stantio sovrascrive la
+    # condizione sbagliata. loaded_condition_idx e' un indice numerico nella
+    # lista: se la lista cambia ordine (cancellazione, import, aggiunta) mentre
+    # una condizione e' aperta, l'indice punta altrove.
+    def _state_con_tre_condizioni(self, tmp):
+        store = ConditionStore(os.path.join(tmp, "conditions.json"))
+        for nome in ("A", "B", "C"):
+            store.add({"name": nome, "type": "value_comparison", "tag": "",
+                       "table": "Diffusori", "column": "Nome", "display_columns": []})
+        return SimpleNamespace(
+            store=store,
+            current_db_label="Datico.mdb",
+            sel_tables=["Diffusori"],
+            status=SimpleNamespace(set=lambda v: None),
+            var_saved=SimpleNamespace(get=lambda: "B", set=lambda v: None),
+            loaded_condition_idx=1,
+        )
+
+    def test_update_to_lib_follows_condition_moved_by_deletion(self):
+        from app.controllers.library_controller import LibraryController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state_con_tre_condizioni(tmp)
+            lib = LibraryController(state, DBController(state))
+            state.store.delete(0)            # A cancellata: B scende a indice 0
+            with patch("app.controllers.library_controller.messagebox") as mb:
+                mb.showinfo, mb.showwarning, mb.showerror = (lambda *a, **k: None,) * 3
+                lib.update_to_lib("value_comparison", {"column": "Aggiornata"}, None)
+            per_nome = {c["name"]: c for c in state.store.items}
+            self.assertEqual(per_nome["B"]["column"], "Aggiornata",
+                             "la condizione aperta deve essere aggiornata anche dopo uno spostamento")
+            self.assertEqual(per_nome["C"]["column"], "Nome",
+                             "C non deve essere toccata: era solo il vicino di indice")
+
+    def test_update_to_lib_does_not_crash_when_index_out_of_range(self):
+        from app.controllers.library_controller import LibraryController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = self._state_con_tre_condizioni(tmp)
+            lib = LibraryController(state, DBController(state))
+            state.store.delete(1)
+            state.store.delete(1)            # restano solo A; l'indice 1 e' fuori range
+            with patch("app.controllers.library_controller.messagebox") as mb:
+                avvisi = []
+                mb.showinfo = lambda *a, **k: None
+                mb.showerror = lambda *a, **k: None
+                mb.showwarning = lambda *a, **k: avvisi.append(a)
+                lib.update_to_lib("value_comparison", {"column": "Aggiornata"}, None)
+            self.assertEqual(state.store.items[0]["column"], "Nome",
+                             "nessuna condizione deve essere modificata")
+            self.assertTrue(avvisi, "l'utente deve essere avvisato che non e' stato aggiornato nulla")
+
     # --- Bug 8: cross_existence senza destinazioni -> errore, non SQL rotto ---
     def test_cross_existence_without_destinations_returns_error(self):
         db = FakeDB()

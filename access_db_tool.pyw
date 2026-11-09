@@ -304,6 +304,10 @@ class App(tk.Tk):
 
         self.main_panel = ttk.Frame(content_frame, padding=8)
         self.main_panel.pack(fill=tk.BOTH, expand=True)
+        # Le view si impilano nella stessa cella: il cambio tab e' un tkraise(),
+        # quindi non c'e' unmap/remap del sottoalbero (esperimento).
+        self.main_panel.grid_rowconfigure(0, weight=1)
+        self.main_panel.grid_columnconfigure(0, weight=1)
 
         self._build_status_bar(main_frame)
         self._switch_tab("db")
@@ -340,16 +344,15 @@ class App(tk.Tk):
         self.mon_indicator.pack(side=tk.RIGHT)
 
     def _switch_tab(self, tab_id):
-        if self.current_view_id is not None:
-            self.views[self.current_view_id].pack_forget()
         view = self.views.get(tab_id)
         if view is None:
             view = self._create_view(tab_id)
             if view is None:
                 return
+            view.grid(row=0, column=0, sticky="nsew")
             self.views[tab_id] = view
             self._wire_view_once(tab_id, view)
-        view.pack(fill=tk.BOTH, expand=True)
+        view.tkraise()
         self.current_view_id = tab_id
         self.current_view = view
         self.app_ctrl.set_active_nav(tab_id, self.nav_buttons)
@@ -476,9 +479,14 @@ class App(tk.Tk):
         self._handle_active_db_switched()
 
     def _handle_active_db_switched(self):
-        self.app_ctrl.stop_monitor()
+        """Il database attivo e' cambiato: ferma il monitor se girava, aggiorna
+        l'indicatore e tutte le view vive. Se il monitor non girava, la barra
+        di stato resta quella del database appena aperto."""
+        monitor_attivo = bool(getattr(getattr(self.state, "monitor", None), "is_running", False))
+        if monitor_attivo:
+            self.app_ctrl.stop_monitor()
+            self.state.status.set("Monitor fermato: database cambiato.")
         self._set_mon_indicator("stopped")
-        self.state.status.set("Monitor fermato: database cambiato.")
         self._refresh_live_views()
 
     def _refresh_live_views(self):

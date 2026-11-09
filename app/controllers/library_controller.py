@@ -88,9 +88,39 @@ class LibraryController:
         self.state.status.set(f"Salvata condizione: {name}")
         return cond_data
 
+    def _index_by_name(self, name):
+        """Indice della condizione omonima, o None. I nomi sono univoci in
+        libreria (vedi bug #18): sono la chiave stabile, l'indice no."""
+        wanted = str(name or "").strip()
+        if not wanted:
+            return None
+        for i, cond in enumerate(self.state.store.items):
+            if str(cond.get("name", "") or "").strip() == wanted:
+                return i
+        return None
+
+    def _resolve_loaded_index(self, idx, name):
+        """Indice della condizione aperta, riallineato se la lista si e' mossa.
+
+        `loaded_condition_idx` e' un indice posizionale: cancellare, importare
+        o aggiungere condizioni mentre una e' aperta lo fa puntare a un'altra
+        condizione. Il nome e' l'identita' stabile; l'indice e' solo una
+        scorciatoia che va verificata prima di scriverci sopra.
+        """
+        items = self.state.store.items
+        if idx is None or idx < 0 or idx >= len(items):
+            return self._index_by_name(name)
+        current = str(items[idx].get("name", "") or "").strip()
+        if not name or current == name:
+            return idx
+        moved = self._index_by_name(name)
+        if moved is not None:
+            return moved
+        return idx  # nome diverso e non presente altrove: e' una rinomina
+
     def update_to_lib(self, ctype, config, display_cols):
         name = self.state.var_saved.get()
-        idx = self.state.loaded_condition_idx
+        idx = self._resolve_loaded_index(self.state.loaded_condition_idx, name)
         if idx is None or idx < 0:
             # Non silenziare mai: l'utente deve sapere che l'aggiornamento
             # non e' avvenuto (es. condizione aperta da dashboard senza match).
@@ -125,6 +155,7 @@ class LibraryController:
             cond_data["display_columns"] = display_cols
         cond_data = self.prepare_condition_for_storage(cond_data)
         self.state.store.update(idx, cond_data)
+        self.state.loaded_condition_idx = idx
         self.state.var_saved.set(name)
         self.state.status.set("Condizione aggiornata!")
         messagebox.showinfo("OK", "Condizione aggiornata con successo!")
