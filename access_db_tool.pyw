@@ -54,6 +54,7 @@ logger = setup_logging(constants._BASE_DIR)
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+        self._tk_thread_id = threading.get_ident()
         logger.info(f"Avvio Access DB Quality Control Tool v{constants.APP_VERSION}...")
 
         db = DatabaseManager()
@@ -80,6 +81,10 @@ class App(tk.Tk):
 
         self.db_ctrl = DBController(self.state)
         self.library_ctrl = LibraryController(self.state, self.db_ctrl)
+        self.library_ctrl.set_view_loader(self._open_cond_in_builder)
+        self.library_ctrl.set_view_refresher(
+            lambda: self.views["controls"].refresh_lib() if "controls" in self.views else None
+        )
         self.result_ctrl = ResultController(self.state)
         self.state.result_ctrl = self.result_ctrl
         self.batch_ctrl = BatchController(self.state, self.db_ctrl, self.result_ctrl)
@@ -93,7 +98,10 @@ class App(tk.Tk):
 
         self.nav_buttons = {}
         self.main_panel = None
+        self.views = {}
         self.current_view = None
+        self.current_view_id = None
+        self._wired = set()
         self.mon_indicator = None
         self.mon_queue = mon_queue
         self.btn_mon_start = None
@@ -209,9 +217,9 @@ class App(tk.Tk):
             self._switch_tab(tab_id)
 
     def _auto_show_results(self):
-        """Mostra i risultati nel pannello del tab corrente, SENZA saltare
+        """Mostra i risultati nel pannello del tab Controlli, SENZA saltare
         di tab (Beta: il salto automatico a Dashboard disorientava il flusso)."""
-        view = getattr(self, "current_view", None)
+        view = self.views.get("controls")
         if view is not None and hasattr(view, "show_results") and self.state.current_result:
             try:
                 view.show_results(self.state.current_result)
@@ -223,21 +231,22 @@ class App(tk.Tk):
         prima di salvare, per non perdere le modifiche in Filtri/Esclusioni.
         Passa anche la selezione colonne report (fix: prima il salvataggio dal
         menu azzerava le display_columns salvate)."""
-        if self.current_view and hasattr(self.current_view, "_sync_builder_from_sections"):
-            self.current_view._sync_builder_from_sections()
+        controls_view = self.views.get("controls")
+        if controls_view and hasattr(controls_view, "_sync_builder_from_sections"):
+            controls_view._sync_builder_from_sections()
         display_cols = self._view_display_cols()
         self.library_ctrl.save_cond(False, display_cols=display_cols)
 
     def _menu_save_cond_new(self):
-        if self.current_view and hasattr(self.current_view, "_sync_builder_from_sections"):
-            self.current_view._sync_builder_from_sections()
+        controls_view = self.views.get("controls")
+        if controls_view and hasattr(controls_view, "_sync_builder_from_sections"):
+            controls_view._sync_builder_from_sections()
         display_cols = self._view_display_cols()
         self.library_ctrl.save_cond(True, display_cols=display_cols)
 
     def _view_display_cols(self):
-        """Selezione colonne report del selettore attivo, o None se il
-        selettore non è stato inizializzato (nessuna tabella caricata)."""
-        view = getattr(self, "current_view", None)
+        """Selezione colonne report della view Controlli, o None se non inizializzata."""
+        view = self.views.get("controls")
         sel = getattr(view, "col_selector", None)
         if sel is not None and getattr(sel, "col_vars", None):
             return sel.get_selected()
@@ -331,72 +340,90 @@ class App(tk.Tk):
         self.mon_indicator.pack(side=tk.RIGHT)
 
     def _switch_tab(self, tab_id):
-        self.current_view = self.app_ctrl.switch_tab(
-            tab_id, self.nav_buttons, self.main_panel
-        )
-        if self.current_view:
-            self._wire_view_callbacks(tab_id)
-        if hasattr(self, "lbl_page_title"):
-            self.lbl_page_title.config(text=self._PAGE_TITLES.get(tab_id, ""))
+        if self.current_view_id is not None:
+            self.views[self.current_view_id].pack_forget()
+        view = self.views.get(tab_id)
+        if view is None:
+            view = self._create_view(tab_id)
+            if view is None:
+                return
+            self.views[tab_id] = view
+            self._wire_view_once(tab_id, view)
+        view.pack(fill=tk.BOTH, expand=True)
+        self.current_view_id = tab_id
+        self.current_view = view
+        self.app_ctrl.set_active_nav(tab_id, self.nav_buttons)
+        self.lbl_page_title.config(text=self._PAGE_TITLES.get(tab_id, ""))
         self._refresh_header_db()
+        hook = getattr(view, "refresh", None)
+        if hook is not None:
+            hook()
 
-    def _wire_view_callbacks(self, tab_id):
-        view = self.current_view
+    def _create_view(self, tab_id):
+        if tab_id == "db":
+            from views.database_view import DatabaseView
+            return DatabaseView(self.main_panel, self.state, self.db_ctrl)
+        elif tab_id == "controls":
+            from views.builder_view import BuilderView
+            return BuilderView(
+                self.main_panel, self.state, self.db_ctrl,
+                library_controller=self.library_ctrl,
+                result_controller=self.result_ctrl,
+            )
+        elif tab_id == "dashboard":
+            from views.dashboard_view import DashboardView
+            return DashboardView(
+                self.main_panel, self.state, self.db_ctrl,
+                library_controller=self.library_ctrl,
+                batch_controller=self.batch_ctrl,
+                result_controller=self.result_ctrl,
+            )
+        elif tab_id == "monitor":
+            from views.monitor_view import MonitorView
+            view = MonitorView(self.main_panel, self.state, self.app_ctrl)
+            self.app_ctrl.set_monitor_row_callback(view.add_row)
+            return view
+        return None
+
+    def _wire_view_once(self, tab_id, view):
+        """Wiring coi controller, eseguito alla creazione della view (una volta sola)."""
+        if tab_id in self._wired:
+            return
         if tab_id == "controls":
-            view.library_ctrl = self.library_ctrl
-            view.result_ctrl = self.result_ctrl
             view.refresh_lib()
-            if hasattr(view, "refresh"):
-                view.refresh()
             # Risultati incorporati nel tab Controlli (flusso lineare)
             if hasattr(view, "results_view"):
-                view.results_view.result_ctrl = self.result_ctrl
                 view.results_view.set_open_in_builder_callback(self._open_cond_in_builder)
                 view.results_view.set_ensure_db_callback(self.db_ctrl.ensure_active_database_for_label)
             if self.result_ctrl:
                 self.result_ctrl.set_results_callback(
                     lambda res, v=view: v.after(0, v.show_results, res))
         elif tab_id == "dashboard":
-            view.library_ctrl = self.library_ctrl
-            view.batch_ctrl = self.batch_ctrl
-            view.result_ctrl = self.result_ctrl
-            if self.batch_ctrl:
-                # Le callback arrivano da thread worker del batch: marshalling
-                # sul main thread via after(), altrimenti Tkinter cross-thread
-                # solleva eccezioni e interrompe l'aggiornamento.
-                self.batch_ctrl.set_log_callback(
-                    lambda line, v=view: v.after(0, v._append_log, line))
-                self.batch_ctrl.set_progress_callback(
-                    lambda cur, tot, v=view: v.after(0, v._update_progress, cur, tot))
-                self.batch_ctrl.set_dash_update_callback(
-                    lambda v=view: v.after(0, v._refresh))
-            if self.result_ctrl:
-                self.result_ctrl.set_results_callback(
-                    lambda res, v=view: v.after(0, v.show_results, res))
             if hasattr(view, "results_view"):
-                view.results_view.result_ctrl = self.result_ctrl
                 view.results_view.set_open_in_builder_callback(self._open_cond_in_builder)
                 view.results_view.set_ensure_db_callback(self.db_ctrl.ensure_active_database_for_label)
             # Doppio click su riga dashboard -> apri nel builder (tab Controlli)
             if hasattr(view, "set_open_in_builder_callback"):
                 view.set_open_in_builder_callback(self._open_cond_in_builder)
-            view._refresh()
         elif tab_id == "db":
             if hasattr(view, "set_load_insight_callback"):
                 view.set_load_insight_callback(self._load_insight)
+            if hasattr(view, "set_close_db_callback"):
+                view.set_close_db_callback(self._close_db)
             if hasattr(view, "set_db_changed_callback"):
                 view.set_db_changed_callback(self._refresh_header_db)
             if hasattr(view, "set_profiler_done_callback"):
                 view.set_profiler_done_callback(lambda: None)
+        self._wired.add(tab_id)
 
     def _open_cond_in_builder(self, cond, pending=None):
-        """Apre una condizione nel tab Controlli ricostruendo il builder.
-        Se 'pending' è presente (esclusione catturata dai risultati in
-        dashboard) la riapplica al builder appena costruito."""
+        """Apre una condizione nel tab Controlli (view persistente, senza
+        ricostruire il builder). Se 'pending' è presente (esclusione catturata
+        dai risultati in dashboard) la riapplica al builder appena caricato."""
         if not cond:
             return
         self._switch_tab("controls")
-        view = self.current_view
+        view = self.views["controls"]
         if not hasattr(view, "load_condition"):
             return
         view.load_condition(cond)
@@ -427,8 +454,7 @@ class App(tk.Tk):
     def _close_db(self):
         self.app_ctrl.stop_monitor()
         self.db_ctrl.close_db()
-        if hasattr(self, "current_view") and hasattr(self.current_view, "refresh"):
-            self.current_view.refresh()
+        self._refresh_live_views()
         self._refresh_header_db()
 
     def _set_mon_indicator(self, state):
@@ -440,11 +466,31 @@ class App(tk.Tk):
             self.mon_indicator.config(text=" MONITOR OFF ", bootstyle="inverse-danger")
 
     def _on_active_db_switched(self):
-        """Il database attivo è cambiato: il monitor girava sul file precedente,
-        le sue condizioni non valgono più -> fermalo e aggiorna l'indicatore."""
+        """Ferma il monitor e rinfresca le view sul thread Tk principale."""
+        if threading.get_ident() != self._tk_thread_id:
+            try:
+                self.after(0, self._handle_active_db_switched)
+            except Exception:
+                logger.exception("Impossibile pianificare il refresh dopo il cambio DB")
+            return
+        self._handle_active_db_switched()
+
+    def _handle_active_db_switched(self):
         self.app_ctrl.stop_monitor()
         self._set_mon_indicator("stopped")
         self.state.status.set("Monitor fermato: database cambiato.")
+        self._refresh_live_views()
+
+    def _refresh_live_views(self):
+        """Notifica le view già costruite che lo stato del DB è cambiato."""
+        for view in list(self.views.values()):
+            hook = getattr(view, "refresh", None)
+            if hook is None:
+                continue
+            try:
+                hook()
+            except Exception:
+                logger.exception("Refresh della view fallito dopo cambio DB")
 
     def _start_monitor(self):
         if self.app_ctrl.start_monitor():
@@ -452,8 +498,9 @@ class App(tk.Tk):
 
     def _run_profiler_from_view(self):
         self.db_ctrl.run_profiler()
-        if hasattr(self, "current_view") and hasattr(self.current_view, "refresh"):
-            self.current_view.refresh()
+        view = self.views.get(self.current_view_id)
+        if view is not None and hasattr(view, "refresh"):
+            view.refresh()
 
     def _run_current_from_view(self):
         if hasattr(self, "current_view") and hasattr(self.current_view, "_run_current"):

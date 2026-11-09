@@ -337,7 +337,7 @@ class AppBuilderIntegrationTests(unittest.TestCase):
         app._switch_tab("dashboard")
         dash = app.current_view
         self.assertIsNotNone(dash)
-        # La callback open_in_builder deve essere cablata da _wire_view_callbacks
+        # La callback open_in_builder deve essere cablata da _wire_view_once
         self.assertIsNotNone(dash._on_open_in_builder)
 
         cond = {

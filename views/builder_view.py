@@ -20,6 +20,7 @@ class BuilderView(ttk.Frame):
         self.result_ctrl = result_controller or getattr(state, "result_ctrl", None)
         self._sections = {}
         self._periodicita_data = None
+        self._db_signature = self._database_signature()
         self._build_ui()
 
     def _build_ui(self):
@@ -595,7 +596,35 @@ class BuilderView(ttk.Frame):
 
     def refresh(self):
         """Aggiorna gli stati dipendenti dal DB aperto (chiamato dall'App)."""
+        signature = self._database_signature()
+        if signature != self._db_signature:
+            self._db_signature = signature
+            self._invalidate_db_dependent_widgets()
         self._refresh_db_hint()
+
+    def _database_signature(self):
+        db = getattr(self.state, "db", None)
+        return (
+            bool(getattr(db, "connected", False)),
+            getattr(db, "db_path", None),
+            getattr(self.state, "current_db_label", None),
+            tuple(getattr(db, "tables", ()) or ()),
+        )
+
+    def _invalidate_db_dependent_widgets(self):
+        """Ricrea i controlli legati al database e scarta selezioni obsolete."""
+        builder = self.state.active_builder
+        if builder is not None:
+            try:
+                builder.destroy()
+            except Exception:
+                logger.debug("Builder precedente già distrutto durante il cambio DB")
+        self.state.active_builder = None
+        self.state.sel_tables = []
+        if getattr(self, "col_selector", None) is not None:
+            self.col_selector.set_columns([])
+        self._update_builder_fields()
+        self._invalidate_accordion_sections()
 
     def _refresh_db_hint(self):
         if not hasattr(self, "lbl_db_hint"):

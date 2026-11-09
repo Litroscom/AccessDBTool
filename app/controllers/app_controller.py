@@ -31,45 +31,9 @@ class AppController:
         except Exception as e:
             logger.debug("Beep monitor non disponibile: %s", e)
 
-    def switch_tab(self, tab_id, nav_buttons, main_panel):
-        import tkinter as tk
-        import ttkbootstrap as ttk
-
-        for btn in nav_buttons.values():
-            btn.configure(bootstyle="secondary-outline")
-        nav_buttons[tab_id].configure(bootstyle="primary")
-
-        self.state.active_builder = None
-        for w in main_panel.winfo_children():
-            w.destroy()
-
-        if tab_id == "db":
-            from views.database_view import DatabaseView
-            view = DatabaseView(main_panel, self.state, self.db_ctrl)
-            view.pack(fill=tk.BOTH, expand=True)
-            view.refresh()
-            return view
-        elif tab_id == "controls":
-            from views.builder_view import BuilderView
-            view = BuilderView(
-                main_panel, self.state, self.db_ctrl,
-                result_controller=getattr(self.state, "result_ctrl", None),
-            )
-            view.pack(fill=tk.BOTH, expand=True)
-            return view
-        elif tab_id == "dashboard":
-            from views.dashboard_view import DashboardView
-            view = DashboardView(main_panel, self.state, self.db_ctrl)
-            view.pack(fill=tk.BOTH, expand=True)
-            view._refresh()
-            return view
-        elif tab_id == "monitor":
-            from views.monitor_view import MonitorView
-            view = MonitorView(main_panel, self.state, self)
-            view.pack(fill=tk.BOTH, expand=True)
-            self.set_monitor_row_callback(view.add_row)
-            return view
-        return None
+    def set_active_nav(self, tab_id, nav_buttons):
+        for btn_tab, btn in nav_buttons.items():
+            btn.configure(bootstyle="primary" if btn_tab == tab_id else "secondary-outline")
 
     def poll_monitor(self, root):
         try:

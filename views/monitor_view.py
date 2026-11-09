@@ -80,6 +80,10 @@ class MonitorView(ttk.Frame):
         else:
             self.lbl_state.config(text="OFF", bootstyle="inverse-danger")
 
+    def refresh(self):
+        """Hook pubblico chiamato dall'App quando la pagina torna visibile."""
+        self._refresh_state_label()
+
     def add_row(self, row):
         """row = (time, check, status, count). Called by AppController on each monitor result."""
         try:
